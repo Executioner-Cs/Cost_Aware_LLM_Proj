@@ -1,0 +1,139 @@
+/* ─────────────────────────────────────────────
+   Orchestrator TUI — Textual stylesheet
+   ───────────────────────────────────────────── */
+
+Screen {
+    background: $background;
+    layers: base overlay;
+}
+
+/* ── Status Bar (below built-in Header) ─────── */
+#status-bar {
+    height: 1;
+    background: $primary-darken-3;
+    color: $text-muted;
+    padding: 0 2;
+    layout: horizontal;
+    content-align: left middle;
+}
+
+#status-providers {
+    color: $success;
+    width: auto;
+    margin-right: 3;
+}
+
+#status-cache {
+    color: $warning;
+    width: auto;
+    margin-right: 3;
+}
+
+#status-quality {
+    color: $accent;
+    width: auto;
+    margin-right: 3;
+}
+
+#status-budget {
+    color: $text-muted;
+    width: auto;
+}
+
+/* ── Main body (output + optional side panel) ─ */
+#body {
+    layout: horizontal;
+    height: 1fr;
+}
+
+/* ── Output Panel ────────────────────────────── */
+#output-panel {
+    width: 1fr;
+    height: 1fr;
+    border: tall $primary-darken-2;
+    padding: 0 1;
+}
+
+#output-panel RichLog {
+    height: 1fr;
+    scrollbar-gutter: stable;
+}
+
+/* ── Side Panel ──────────────────────────────── */
+#side-panel {
+    width: 28;
+    height: 1fr;
+    border: tall $primary-darken-2;
+    padding: 0 1;
+    display: block;
+}
+
+#side-panel-title {
+    color: $accent;
+    text-style: bold;
+    padding: 0 0 1 0;
+}
+
+#side-trace-list {
+    height: 1fr;
+    color: $text-muted;
+}
+
+/* ── Input Area ──────────────────────────────── */
+#input-area {
+    height: 3;
+    layout: horizontal;
+    padding: 0 1;
+    border-top: tall $primary-darken-2;
+    align: left middle;
+}
+
+#prompt-label {
+    width: auto;
+    color: $accent;
+    text-style: bold;
+    padding: 0 1 0 0;
+    content-align: left middle;
+}
+
+#cmd-input {
+    width: 1fr;
+    border: none;
+    background: transparent;
+    padding: 0;
+}
+
+#cmd-input:focus {
+    border: none;
+}
+
+/* ── Welcome banner ──────────────────────────── */
+.welcome {
+    color: $accent;
+    text-style: bold;
+}
+
+.welcome-sub {
+    color: $text-muted;
+}
+
+.cmd-echo {
+    color: $accent;
+    text-style: bold;
+}
+
+.result-success {
+    color: $success;
+}
+
+.result-error {
+    color: $error;
+}
+
+.result-warning {
+    color: $warning;
+}
+
+.separator {
+    color: $primary-darken-2;
+}

@@ -1,0 +1,532 @@
+"""
+TUI Command Dispatcher.
+
+Parses internal orchestrator> commands and calls service layer directly.
+Returns Rich renderables that the TUI app writes to the RichLog.
+"""
+from __future__ import annotations
+
+import shlex
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from rich.table import Table
+from rich.panel import Panel
+from rich.text import Text
+from rich.rule import Rule
+from rich.columns import Columns
+
+from sqlalchemy.orm import Session
+
+
+# ── Session state shared across TUI lifetime ────────────────────────────────
+
+@dataclass
+class SessionState:
+    """Holds live handles kept open for the session."""
+    session: Session
+    home: Path
+    config: dict
+    quality: str = "balanced"
+
+    # Derived stats (refreshed after each mutating command)
+    provider_count: int = 0
+    cache_enabled: bool = True
+    monthly_budget: float = 0.0
+    cost_this_session: float = 0.0
+
+    def refresh_stats(self) -> None:
+        from db.repositories.accounts import list_all
+        accounts = list_all(self.session)
+        self.provider_count = len([a for a in accounts if a.status == "active"])
+        self.cache_enabled = self.config.get("cache", {}).get("enabled", True)
+        self.monthly_budget = self.config.get("cost", {}).get("monthly_budget_usd", 0.0)
+
+
+# ── Dispatcher ───────────────────────────────────────────────────────────────
+
+HELP_TEXT = """\
+[bold cyan]Available commands[/bold cyan]
+
+  [bold]route[/bold] [cyan]<prompt>[/cyan] [--task T] [--quality Q] [--dry-run]
+      Route a prompt to the optimal model.
+      --task    : simple | json_extract | reasoning | vision | tools
+      --quality : cheap | balanced (default) | best
+      --dry-run : estimate cost without calling the provider
+
+  [bold]connect[/bold] [cyan]<provider>[/cyan] [--api-key KEY]
+      Connect an Anthropic or OpenAI account.
+
+  [bold]accounts[/bold] list | sync [cyan]<id>[/cyan] | disconnect [cyan]<id>[/cyan]
+      Manage connected provider accounts.
+
+  [bold]model list[/bold]
+      Show all models in the registry.
+
+  [bold]trace[/bold] list [--limit N] | show [cyan]<id>[/cyan]
+      Browse routing history.
+
+  [bold]cache[/bold] stats | inspect [cyan]<id>[/cyan] | clear [--task-type T] | threshold [cyan]<val>[/cyan]
+      Manage the semantic cache.
+
+  [bold]quality[/bold] [cyan]<cheap|balanced|best>[/cyan]
+      Set the default quality tier for this session.
+
+  [bold]init[/bold]
+      Re-initialise the home directory (safe to re-run).
+
+  [bold]clear[/bold]
+      Clear the output panel.
+
+  [bold]help[/bold] | [bold]?[/bold]
+      Show this help.
+
+  [bold]quit[/bold] | [bold]exit[/bold] | [bold]q[/bold]
+      Exit Orchestrator.
+"""
+
+
+class Dispatcher:
+    def __init__(self, state: SessionState) -> None:
+        self.state = state
+
+    # ── Public entry point ───────────────────────────────────────────────────
+
+    def dispatch(self, raw: str) -> list[Any]:
+        """
+        Parse *raw* command string and return a list of Rich renderables.
+        Returns sentinel string "__clear__" to signal panel clear.
+        Returns sentinel string "__quit__" to signal app exit.
+        """
+        raw = raw.strip()
+        if not raw:
+            return []
+
+        try:
+            parts = shlex.split(raw)
+        except ValueError as exc:
+            return [Text(f"Parse error: {exc}", style="bold red")]
+
+        cmd, *args = parts
+
+        match cmd.lower():
+            case "help" | "?":
+                return [Panel(HELP_TEXT, title="Orchestrator Help", border_style="cyan")]
+
+            case "quit" | "exit" | "q":
+                return ["__quit__"]
+
+            case "clear":
+                return ["__clear__"]
+
+            case "init":
+                return self._cmd_init()
+
+            case "route":
+                return self._cmd_route(args)
+
+            case "connect":
+                return self._cmd_connect(args)
+
+            case "accounts":
+                return self._cmd_accounts(args)
+
+            case "model":
+                return self._cmd_model(args)
+
+            case "trace":
+                return self._cmd_trace(args)
+
+            case "cache":
+                return self._cmd_cache(args)
+
+            case "quality":
+                return self._cmd_quality(args)
+
+            case _:
+                return [Text(
+                    f"  Unknown command: '{cmd}'.  Type help for available commands.",
+                    style="red"
+                )]
+
+    # ── Command handlers ─────────────────────────────────────────────────────
+
+    def _cmd_init(self) -> list[Any]:
+        from services.init_service import run_init
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        try:
+            run_init(self.state.home)
+            self.state.refresh_stats()
+            return [Text("✓  Orchestrator initialised successfully.", style="bold green")]
+        except Exception as exc:
+            return [Text(f"Error during init: {exc}", style="bold red")]
+
+    def _cmd_route(self, args: list[str]) -> list[Any]:
+        import argparse
+        from schemas.routing import RouteRequest
+        from core.router import route
+
+        p = _silent_parser("route")
+        p.add_argument("prompt", nargs="+")
+        p.add_argument("--task", default=None)
+        p.add_argument("--quality", default=self.state.quality)
+        p.add_argument("--dry-run", action="store_true")
+
+        try:
+            ns = p.parse_args(args)
+        except SystemExit as exc:
+            return [Text(f"Usage: route <prompt> [--task T] [--quality Q] [--dry-run]", style="yellow")]
+
+        prompt = " ".join(ns.prompt)
+        request = RouteRequest(
+            prompt=prompt,
+            task_type=ns.task,
+            quality=ns.quality,
+            dry_run=ns.dry_run,
+        )
+
+        try:
+            result = route(request, self.state.session)
+        except Exception as exc:
+            return [Text(f"Error: {exc}", style="bold red")]
+
+        # Accumulate session cost
+        self.state.cost_this_session += result.estimated_cost_usd
+
+        # Build metadata grid
+        meta = Table.grid(padding=(0, 2))
+        meta.add_column(style="bold cyan", no_wrap=True)
+        meta.add_column()
+
+        meta.add_row("Task", result.task_type)
+        meta.add_row("Route", result.route_reason)
+        if result.provider:
+            meta.add_row("Provider", result.provider)
+        if result.model_id:
+            meta.add_row("Model", result.model_id)
+
+        if result.cache_hit:
+            cache_str = f"[bold green]HIT[/bold green]  (similarity: {result.cache_similarity:.3f})"
+        else:
+            cache_str = "[dim]miss[/dim]"
+        meta.add_row("Cache", cache_str)
+
+        if result.input_tokens is not None:
+            tokens_str = f"{result.input_tokens} in"
+            if result.output_tokens:
+                tokens_str += f" / {result.output_tokens} out"
+            meta.add_row("Tokens", tokens_str)
+
+        meta.add_row("Cost", f"${result.estimated_cost_usd:.6f}")
+        if result.latency_ms is not None:
+            meta.add_row("Latency", f"{result.latency_ms / 1000:.2f}s")
+
+        renderables: list[Any] = [meta]
+
+        if result.response_text:
+            renderables.append(
+                Panel(result.response_text, title="Answer", border_style="green")
+            )
+        elif ns.dry_run:
+            renderables.append(Text("  [dry-run] No provider call made.", style="dim"))
+
+        return renderables
+
+    def _cmd_connect(self, args: list[str]) -> list[Any]:
+        import argparse, getpass
+        from services.connect_service import connect as svc_connect
+
+        p = _silent_parser("connect")
+        p.add_argument("provider")
+        p.add_argument("--api-key", default=None)
+
+        try:
+            ns = p.parse_args(args)
+        except SystemExit:
+            return [Text("Usage: connect <provider> [--api-key KEY]", style="yellow")]
+
+        api_key = ns.api_key
+        if not api_key:
+            # Can't prompt interactively in TUI; instruct user
+            return [Text(
+                f"Please supply the key inline:  connect {ns.provider} --api-key sk-...",
+                style="yellow"
+            )]
+
+        try:
+            account = svc_connect(self.state.session, ns.provider, api_key)
+            self.state.refresh_stats()
+            return [Text(
+                f"✓  Connected [bold]{ns.provider}[/bold] "
+                f"({account.display_name or 'account'}, id: {account.id[:8]}…)",
+                style="bold green"
+            )]
+        except Exception as exc:
+            return [Text(f"Error: {exc}", style="bold red")]
+
+    def _cmd_accounts(self, args: list[str]) -> list[Any]:
+        if not args:
+            return [Text("Usage: accounts list | sync <id> | disconnect <id>", style="yellow")]
+
+        sub = args[0].lower()
+
+        if sub == "list":
+            from services.account_service import list_accounts
+            accounts = list_accounts(self.state.session)
+            if not accounts:
+                return [Text("  No accounts connected. Run: connect <provider> --api-key ...", style="yellow")]
+            table = Table(title="Connected Accounts", border_style="cyan")
+            table.add_column("ID", style="dim")
+            table.add_column("Provider")
+            table.add_column("Name")
+            table.add_column("Status")
+            table.add_column("Synced")
+            for a in accounts:
+                table.add_row(
+                    a.id[:8] + "…", a.provider,
+                    a.display_name or "—", a.status,
+                    (a.last_synced_at or "—")[:10],
+                )
+            return [table]
+
+        elif sub == "sync":
+            if len(args) < 2:
+                return [Text("Usage: accounts sync <account-id>", style="yellow")]
+            from services.account_service import sync_account
+            try:
+                sync_account(self.state.session, args[1])
+                self.state.refresh_stats()
+                return [Text(f"✓  Account {args[1][:8]}… synced.", style="green")]
+            except Exception as exc:
+                return [Text(f"Error: {exc}", style="bold red")]
+
+        elif sub == "disconnect":
+            if len(args) < 2:
+                return [Text("Usage: accounts disconnect <account-id>", style="yellow")]
+            from services.account_service import disconnect_account
+            try:
+                disconnect_account(self.state.session, args[1])
+                self.state.refresh_stats()
+                return [Text(f"✓  Account {args[1][:8]}… disconnected.", style="green")]
+            except Exception as exc:
+                return [Text(f"Error: {exc}", style="bold red")]
+
+        return [Text(f"Unknown sub-command: accounts {sub}", style="red")]
+
+    def _cmd_model(self, args: list[str]) -> list[Any]:
+        if not args or args[0] != "list":
+            return [Text("Usage: model list", style="yellow")]
+        from services.model_service import list_models
+        models = list_models(self.state.session)
+        if not models:
+            return [Text("  No models found. Run: connect <provider>", style="yellow")]
+        table = Table(title="Model Registry", border_style="cyan")
+        table.add_column("Provider")
+        table.add_column("Model ID")
+        table.add_column("Tier")
+        table.add_column("Ctx")
+        table.add_column("$/1M in", justify="right")
+        table.add_column("$/1M out", justify="right")
+        table.add_column("JSON")
+        table.add_column("Tools")
+        table.add_column("Vision")
+        for m in models:
+            ctx = f"{m.context_window // 1000}k" if m.context_window else "—"
+            table.add_row(
+                m.provider, m.external_model_id, m.tier, ctx,
+                f"${m.cost_per_1m_input:.2f}" if m.cost_per_1m_input is not None else "—",
+                f"${m.cost_per_1m_output:.2f}" if m.cost_per_1m_output is not None else "—",
+                "✓" if m.supports_json else "✗",
+                "✓" if m.supports_tools else "✗",
+                "✓" if m.supports_vision else "✗",
+            )
+        return [table]
+
+    def _cmd_trace(self, args: list[str]) -> list[Any]:
+        if not args:
+            return [Text("Usage: trace list [--limit N] | trace show <id>", style="yellow")]
+
+        sub = args[0].lower()
+
+        if sub == "list":
+            limit = 15
+            if "--limit" in args:
+                try:
+                    limit = int(args[args.index("--limit") + 1])
+                except (ValueError, IndexError):
+                    pass
+            from services.trace_service import get_traces
+            traces = get_traces(self.state.session, limit)
+            if not traces:
+                return [Text("  No traces yet.", style="dim")]
+            table = Table(title=f"Recent Traces (last {limit})", border_style="cyan")
+            table.add_column("ID", style="dim")
+            table.add_column("Task")
+            table.add_column("Provider")
+            table.add_column("Cache")
+            table.add_column("Cost", justify="right")
+            table.add_column("Latency", justify="right")
+            table.add_column("Status")
+            for t in traces:
+                cache_str = f"HIT {t.cache_similarity:.3f}" if t.cache_hit else "miss"
+                cost_str = f"${t.estimated_cost_usd:.6f}" if t.estimated_cost_usd is not None else "—"
+                lat_str = f"{t.latency_ms}ms" if t.latency_ms else "—"
+                table.add_row(
+                    (t.id or "")[:8] + "…",
+                    t.task_type or "—",
+                    t.provider or "—",
+                    cache_str, cost_str, lat_str, t.status,
+                )
+            return [table]
+
+        elif sub == "show":
+            if len(args) < 2:
+                return [Text("Usage: trace show <id>", style="yellow")]
+            from services.trace_service import get_trace
+            t = get_trace(self.state.session, args[1])
+            if not t:
+                return [Text(f"Trace '{args[1]}' not found.", style="red")]
+            grid = Table.grid(padding=(0, 2))
+            grid.add_column(style="bold cyan", no_wrap=True)
+            grid.add_column()
+            for k, v in [
+                ("ID", t.id), ("Task", t.task_type or "—"),
+                ("Route", t.route_reason or "—"), ("Provider", t.provider or "—"),
+                ("Model", t.model_external_id or "—"),
+                ("Cache Hit", "YES" if t.cache_hit else "NO"),
+                ("Similarity", f"{t.cache_similarity:.4f}" if t.cache_similarity else "—"),
+                ("Tokens", f"{t.input_tokens}/{t.output_tokens}" if t.input_tokens else "—"),
+                ("Cost", f"${t.estimated_cost_usd:.6f}" if t.estimated_cost_usd is not None else "—"),
+                ("Latency", f"{t.latency_ms}ms" if t.latency_ms else "—"),
+                ("Status", t.status), ("Error", t.error_message or "—"),
+                ("Created", t.created_at),
+            ]:
+                grid.add_row(k, v)
+            renderables: list[Any] = [Panel(grid, title=f"Trace {(t.id or '')[:8]}…", border_style="cyan")]
+            if t.prompt_preview:
+                renderables.append(Panel(t.prompt_preview, title="Prompt", border_style="dim"))
+            return renderables
+
+        return [Text(f"Unknown: trace {sub}", style="red")]
+
+    def _cmd_cache(self, args: list[str]) -> list[Any]:
+        if not args:
+            return [Text("Usage: cache stats | inspect <id> | clear | threshold <val>", style="yellow")]
+
+        sub = args[0].lower()
+        home = self.state.home
+        threshold = self.state.config.get("cache", {}).get("similarity_threshold", 0.92)
+
+        def _get_cache():
+            from core.semantic_cache import SemanticCache
+            return SemanticCache(
+                qdrant_path=home / "qdrant",
+                sqlite_session=self.state.session,
+                similarity_threshold=threshold,
+            )
+
+        if sub == "stats":
+            try:
+                c = _get_cache()
+                stats = c.stats()
+                c.close()
+            except Exception as exc:
+                return [Text(f"Cache unavailable: {exc}", style="red")]
+            grid = Table.grid(padding=(0, 2))
+            grid.add_column(style="bold cyan", no_wrap=True)
+            grid.add_column()
+            grid.add_row("Total entries", str(stats["total_entries"]))
+            grid.add_row("Total hits", str(stats["total_hits"]))
+            grid.add_row("Threshold", str(threshold))
+            renderables: list[Any] = [Panel(grid, title="Cache Statistics", border_style="cyan")]
+            if stats["top_entries"]:
+                table = Table(title="Top Entries", border_style="dim")
+                table.add_column("ID", style="dim")
+                table.add_column("Preview")
+                table.add_column("Hits", justify="right")
+                for e in stats["top_entries"]:
+                    table.add_row(e["id"][:8] + "…", e["response_preview"] + "…", str(e["hit_count"]))
+                renderables.append(table)
+            return renderables
+
+        elif sub == "inspect":
+            if len(args) < 2:
+                return [Text("Usage: cache inspect <id>", style="yellow")]
+            from db.repositories.cache import get_by_id
+            entry = get_by_id(self.state.session, args[1])
+            if not entry:
+                return [Text(f"Cache entry '{args[1]}' not found.", style="red")]
+            grid = Table.grid(padding=(0, 2))
+            grid.add_column(style="bold cyan", no_wrap=True)
+            grid.add_column()
+            for k, v in [
+                ("ID", entry.id), ("Task", entry.task_type), ("Quality", entry.quality),
+                ("Provider", entry.provider or "—"), ("Model", entry.model_id or "—"),
+                ("Hits", str(entry.hit_count or 0)), ("Created", entry.created_at),
+                ("Last Hit", entry.last_hit_at or "—"),
+            ]:
+                grid.add_row(k, v)
+            return [
+                Panel(grid, title=f"Cache Entry {entry.id[:8]}…", border_style="cyan"),
+                Panel(entry.response_text, title="Cached Response", border_style="green"),
+            ]
+
+        elif sub == "clear":
+            task_type = None
+            if "--task-type" in args:
+                idx = args.index("--task-type")
+                task_type = args[idx + 1] if idx + 1 < len(args) else None
+            try:
+                c = _get_cache()
+                deleted = c.clear(task_type=task_type)
+                c.close()
+            except Exception as exc:
+                return [Text(f"Error: {exc}", style="bold red")]
+            return [Text(f"✓  Deleted {deleted} cache entries.", style="green")]
+
+        elif sub == "threshold":
+            if len(args) < 2:
+                return [Text("Usage: cache threshold <0.0–1.0>", style="yellow")]
+            try:
+                val = float(args[1])
+                assert 0.0 < val < 1.0
+            except (ValueError, AssertionError):
+                return [Text("Threshold must be a float between 0 and 1.", style="red")]
+            import re
+            config_path = home / "config.toml"
+            if config_path.exists():
+                text = config_path.read_text()
+                updated = re.sub(r"(similarity_threshold\s*=\s*)[0-9.]+", rf"\g<1>{val}", text)
+                config_path.write_text(updated)
+            # Also update live config
+            self.state.config.setdefault("cache", {})["similarity_threshold"] = val
+            return [Text(f"✓  Similarity threshold set to {val}", style="green")]
+
+        return [Text(f"Unknown: cache {sub}", style="red")]
+
+    def _cmd_quality(self, args: list[str]) -> list[Any]:
+        valid = {"cheap", "balanced", "best"}
+        if not args or args[0] not in valid:
+            return [Text(f"Usage: quality <cheap|balanced|best>  (current: {self.state.quality})", style="yellow")]
+        self.state.quality = args[0]
+        return [Text(f"✓  Default quality set to [bold]{args[0]}[/bold]", style="green")]
+
+
+# ── Helper ───────────────────────────────────────────────────────────────────
+
+def _silent_parser(prog: str):
+    """argparse.ArgumentParser that raises SystemExit without printing."""
+    import argparse
+
+    class SilentParser(argparse.ArgumentParser):
+        def error(self, message):
+            raise SystemExit(message)
+        def print_usage(self, file=None):
+            pass
+        def print_help(self, file=None):
+            pass
+
+    return SilentParser(prog=prog, add_help=False)

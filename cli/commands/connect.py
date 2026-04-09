@@ -2,11 +2,7 @@
 import typer
 from typing import Annotated
 
-app = typer.Typer()
-
-
-@app.callback(invoke_without_command=True)
-def connect(
+def cmd_connect(
     provider: Annotated[str, typer.Argument(help="Provider name: anthropic | openai")],
     api_key: Annotated[str, typer.Option(
         prompt=True, hide_input=True, help="API key (PAT)"
@@ -17,19 +13,26 @@ def connect(
     from services.connect_service import connect as svc_connect
     from utils.console import console, print_success, print_error
 
-    with console.status(f"[cyan]Connecting to {provider}…"):
-        try:
+    session = None
+    try:
+        with console.status(f"[cyan]Connecting to {provider}…"):
             session = get_session()
             account = svc_connect(session, provider, api_key)
+
+            # Avoid DetachedInstanceError after session close/commit expiry.
+            account_id = account.id
+            display_name = account.display_name
+    except ValueError as exc:
+        print_error(str(exc))
+        raise typer.Exit(1)
+    except Exception as exc:
+        print_error(f"Unexpected error: {exc}")
+        raise typer.Exit(1)
+    finally:
+        if session is not None:
             session.close()
-        except ValueError as exc:
-            print_error(str(exc))
-            raise typer.Exit(1)
-        except Exception as exc:
-            print_error(f"Unexpected error: {exc}")
-            raise typer.Exit(1)
 
     print_success(
         f"Connected [bold]{provider}[/bold] account "
-        f"[dim]{account.display_name or ''}[/dim] (id: {account.id[:8]}…)"
+        f"[dim]{display_name or ''}[/dim] (id: {account_id[:8]}…)"
     )

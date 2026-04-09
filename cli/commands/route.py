@@ -2,11 +2,8 @@
 import typer
 from typing import Annotated, Optional
 
-app = typer.Typer()
 
-
-@app.callback(invoke_without_command=True)
-def route_prompt(
+def cmd_route(
     prompt: Annotated[str, typer.Argument(help="Prompt to route")],
     task: Annotated[Optional[str], typer.Option("--task", "-t", help="Override task type")] = None,
     quality: Annotated[str, typer.Option("--quality", "-q", help="cheap | balanced | best")] = "balanced",

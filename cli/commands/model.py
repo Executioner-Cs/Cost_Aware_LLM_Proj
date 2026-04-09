@@ -1,7 +1,14 @@
 """orchestrator model list"""
 import typer
 
-app = typer.Typer()
+app = typer.Typer(no_args_is_help=True)
+
+
+@app.callback(invoke_without_command=True)
+def model_callback(ctx: typer.Context):
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit(0)
 
 
 @app.command("list")

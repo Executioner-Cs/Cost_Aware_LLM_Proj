@@ -79,6 +79,19 @@ class Trace(Base):
     created_at = Column(String, nullable=False)
 
 
+class ToolCall(Base):
+    """Structured log of agent/orchestrator tool invocations."""
+    __tablename__ = "tool_calls"
+
+    id = Column(String, primary_key=True)
+    trace_id = Column(String, ForeignKey("traces.id"), nullable=True)
+    name = Column(String, nullable=False)
+    args_json = Column(Text, nullable=False)
+    result_json = Column(Text, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    created_at = Column(String, nullable=False)
+
+
 class CacheEntry(Base):
     __tablename__ = "cache_entries"
 

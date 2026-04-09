@@ -46,6 +46,8 @@ The cache key is `(embedding vector, task_type, quality)`. Qdrant handles vector
 | Config | TOML via `tomllib` | Human-readable |
 | Credential storage | `cryptography` (Fernet) | AES encryption for session tokens |
 | Console output | `rich` | Tables, panels, spinners |
+| Immersive TUI | `textual` | Default interactive mode (`orchestrator`) + explicit `orchestrator shell` |
+| Interactive setup UI | `questionary` | Arrow-key provider selection after `orchestrator init` |
 | HTTP client | `httpx` | Used by all provider adapters |
 | Testing | `pytest` + `pytest-asyncio` | Standard |
 
@@ -73,7 +75,13 @@ orchestrator_cli/
 │       ├── route.py              ← `orchestrator route <prompt> [flags]`
 │       ├── trace.py              ← `orchestrator trace list|show`
 │       ├── cache.py              ← `orchestrator cache stats|clear|inspect|threshold`
-│       └── agent.py              ← `orchestrator agent run|edit|explain|fix-tests|refactor`
+│       ├── agent.py              ← `orchestrator agent run|edit|explain|fix-tests|refactor`
+│       └── shell.py             ← `orchestrator shell` (explicit TUI alias)
+│
+├── cli/tui/
+│   ├── app.py                    ← Textual App: SessionState bootstrap, header status, RichLog, Input
+│   ├── dispatcher.py             ← Parses TUI commands → calls services, captures output
+│   └── style.tcss                ← Textual CSS for layout
 │
 ├── agent/
 │   ├── config.py                 ← `[agent]` TOML → AgentConfig
@@ -595,6 +603,40 @@ Answer
 [cached response]
 ```
 
+### `orchestrator` (default immersive mode / hybrid entrypoint)
+
+**Hybrid behaviour** (implemented in `cli/main.py` callback):
+- `orchestrator` (no args, interactive TTY) → launches immersive Textual TUI.
+- `orchestrator` (no args, non-interactive) → prints help and exits.
+- `orchestrator <subcommand> …` → runs that subcommand directly (unchanged).
+
+`orchestrator shell` is an explicit alias that always launches the TUI regardless of detection.
+
+```bash
+orchestrator              # interactive TTY → immersive TUI
+orchestrator shell        # explicit alias — same result
+```
+
+Inside the shell, commands are entered without the `orchestrator` prefix:
+
+```
+orchestrator > help                   # list commands
+orchestrator > connect openai sk-...  # connect with inline key
+orchestrator > model list             # browse models
+orchestrator > route "Summarize this" # route a prompt
+orchestrator > cache stats            # cache analytics
+orchestrator > agent run "Fix tests"  # agent loop
+orchestrator > exit                   # or Ctrl+Q
+```
+
+**Session bootstrap**: on startup, the TUI hydrates a `SessionState` — config, DB/Qdrant readiness, account/model summaries. The header subtitle shows a live status line (provider count, model count, cache on/off, quality). State refreshes automatically after `connect`, `init`, or `accounts` commands.
+
+**Key bindings**: `Ctrl+Q` = quit, `Ctrl+C` = clear input (app stays alive), `Escape` = clear input.
+
+The TUI dispatches to the same service layer as the regular CLI commands. Connect prompts are replaced by inline arguments (`connect <provider> <key>`). Status spinners are suppressed in captured output.
+
+**Architecture**: `cli/tui/app.py` (Textual App with `SessionState` + `bootstrap_state()`), `cli/tui/dispatcher.py` (command parser → service calls, captures Rich console output via `console.capture()` with ANSI preservation), `cli/tui/style.tcss` (layout CSS).
+
 ### `orchestrator agent …`
 
 Multi-step tool loop with sandboxed file I/O, search, Python/pytest, and optional shell.
@@ -691,6 +733,13 @@ embed("warmup")   # triggers sentence-transformers download if not cached
 
 This prevents a surprise 200ms delay on the first `orchestrator route` call.
 
+After the success panel, init attempts an interactive provider handoff:
+- If terminal is interactive and `questionary` is available: show arrow-key picker (`openai`, `anthropic`, `gemini`, `groq`) and run `connect` immediately for the selection.
+- If non-interactive, unavailable, or cancelled: print explicit fallback `orchestrator connect <provider>` commands and exit without error.
+- Interactivity gating checks `sys.stdin.isatty()`, `sys.stdout.isatty()`, and Rich console terminal support before launching picker.
+- If `questionary` is missing, print dependency guidance to install extras in active venv: `pip install -e ".[dev]"`.
+- API key behavior during init handoff stays aligned with connect UX: env/dotenv first, then hidden prompt fallback.
+
 ---
 
 ## Sprint build order
@@ -751,6 +800,9 @@ This prevents a surprise 200ms delay on the first `orchestrator route` call.
 - Agent LLM turns go through `core/llm_turn.py` + provider `chat_with_tools`, not `router.route()`’s cache path
 - Reason codes always imported from `core/reasons.py`
 - `rich` for all terminal output — no bare `print()`
+- **TUI dispatcher** (`cli/tui/dispatcher.py`) captures Rich console output via `console.capture()` with `_force_terminal=True` for ANSI preservation, and `console.status` is replaced with a no-op context manager during capture. Runs in a Textual worker thread; results posted back to the main thread via `call_from_thread`.
+- **Hybrid root command** (`cli/main.py`): `_is_interactive_tty()` detects whether to launch TUI or show help when no subcommand is given. TTY detection checks `sys.stdin.isatty()` and `sys.stdout.isatty()`.
+- **Session state** (`cli/tui/app.py`): `bootstrap_state()` loads config, checks DB/Qdrant, and collects provider/model counts. `_refresh_state()` is called after state-mutating commands (`connect`, `init`, `accounts`) to keep the header subtitle current.
 
 ---
 

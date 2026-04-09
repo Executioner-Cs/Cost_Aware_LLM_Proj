@@ -16,6 +16,7 @@ env/
 
 # Orchestrator runtime
 .orchestrator/
+.orchestrator-preview/
 *.db
 *.db-journal
 

@@ -50,6 +50,13 @@ orchestrator init
 
 Creates `~/.orchestrator/` with `config.toml`, `orchestrator.db`, and the Qdrant vector store. Also downloads and caches the embedding model on first run.
 
+At the end of `init`, interactive terminals now show a staged handoff prompt and an arrow-key provider picker (`openai`, `anthropic`, `gemini`, `groq`), then immediately start the selected `connect` flow.
+
+If interactivity is unavailable, `init` explains why and falls back cleanly:
+- non-TTY sessions: prints manual next-step commands
+- missing picker dependency: prints install hint (`pip install -e ".[dev]"` in active `.venv`)
+- cancelled picker/key entry: prints manual connect commands
+
 ### 3. Connect a provider
 
 ```bash
@@ -121,7 +128,7 @@ Latency    0.012s
 ## CLI Reference
 
 ### `orchestrator init`
-Set up the home directory, SQLite database, Qdrant collection, and warm up the embedding model.
+Set up the home directory, SQLite database, Qdrant collection, and warm up the embedding model. After setup completes, interactive terminals get a compact Claude-like handoff, provider picker, and immediate connect flow (with hidden API-key prompt fallback). Non-interactive or unsupported sessions fall back to manual `orchestrator connect <provider>` commands with troubleshooting hints.
 
 ### `orchestrator connect <provider>`
 Connect a provider using an API key (PAT). Validates the key and populates the model registry. Providers: `anthropic`, `openai`, `groq`, `gemini`.
@@ -139,6 +146,42 @@ anthropic   claude-sonnet-4-6      balanced  200k    $3.00     $15.00
 openai      gpt-4o-mini            small     128k    $0.15     $0.60
 openai      gpt-4o                 balanced  128k    $2.50     $10.00
 ```
+
+### `orchestrator` (default immersive mode)
+
+When you run `orchestrator` with **no subcommand** in an **interactive terminal**, it launches the immersive TUI — a full-screen terminal interface powered by [Textual](https://textual.textualize.io/). The PowerShell/bash prompt disappears; all commands run within the orchestrator environment until you explicitly exit.
+
+```bash
+orchestrator          # interactive TTY → immersive TUI
+orchestrator shell    # explicit alias — same result
+```
+
+Non-interactive environments (piped input, CI) get the standard help text instead.
+
+On startup, the TUI bootstraps session state: loads config, checks DB/Qdrant readiness, and collects connected provider and model summaries. The header subtitle shows a live status line (provider count, model count, cache on/off, quality mode).
+
+**Inside the shell**, type any command without the `orchestrator` prefix:
+
+```
+orchestrator > help                          # list all commands
+orchestrator > connect openai sk-proj-...    # connect with an API key
+orchestrator > model list                    # browse the model registry
+orchestrator > route "Summarize this doc"    # route a prompt
+orchestrator > cache stats                   # check cache analytics
+orchestrator > agent run "Fix tests"         # run the agent loop
+orchestrator > exit                          # return to terminal
+```
+
+**Shortcuts:**
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Execute command |
+| `Escape` | Clear input |
+| `Ctrl+C` | Clear input (app stays alive) |
+| `Ctrl+Q` | Quit the shell |
+
+The header updates after state-mutating commands (`connect`, `init`, `accounts`). The connect flow inside the shell uses the same precedence (explicit key > .env/env var) but prompts are replaced by inline arguments — type `connect <provider> <key>` directly.
 
 ### `orchestrator agent …`
 
@@ -196,7 +239,8 @@ Browse routing history. Every trace includes cache hit status, similarity score,
 ```
 orchestrator_cli/
 ├── cli/                    ← Typer CLI entry points
-│   └── commands/           ← connect, accounts, model, route, trace, cache, agent
+│   ├── commands/           ← connect, accounts, model, route, trace, cache, agent, shell
+│   └── tui/               ← Immersive Textual TUI (app, dispatcher, styles)
 ├── agent/                  ← Sandbox, tool loop, dispatcher, planner, config
 ├── services/               ← Business logic (connect, account, model, trace, init)
 ├── core/                   ← Routing pipeline modules
@@ -303,6 +347,7 @@ network_disabled = true   # documented intent; not full OS network isolation
 | Config | TOML |
 | Credential storage | `cryptography` (Fernet / AES) |
 | Console output | `rich` |
+| Immersive TUI | `textual` |
 | HTTP client | `httpx` |
 | Testing | `pytest` + `pytest-asyncio` |
 
@@ -339,5 +384,6 @@ Tests cover:
 - [x] Gemini connector and agent `chat_with_tools`
 - [ ] Hard budget enforcement (warn-only in V1)
 - [x] Agent / tool-use routing (CLI `orchestrator agent`)
+- [x] Immersive TUI shell (default on `orchestrator`, also `orchestrator shell`)
 - [ ] FastAPI wrapper
 - [ ] Postgres support

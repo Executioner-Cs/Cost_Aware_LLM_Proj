@@ -725,6 +725,8 @@ This prevents a surprise 200ms delay on the first `orchestrator route` call.
 ## Key conventions
 
 - **Virtual environment**: Use a project-local venv (e.g. `.venv/`). **Activate it before any `pip install` or dependency change** so packages and tests use the same interpreter. Do not install project dependencies into the system Python when working on this repo.
+- **Macro expander (agent)**: `orchestrator agent` supports a local inline macro DSL at the start of the goal (e.g. `{BRPR,VENV,CX:2K} ...`). Macros expand into system-prompt constraints without spending model tokens. Implementation lives in `agent/macro_expander.py` and is applied in `agent/loop.py`.
+- **Skills**: Keep recurring workflows as detailed skills under `skills/<name>/SKILL.md` (token efficiency, macro DSL, cache safety, strict workflow).
 - IDs are `uuid4` strings stored as `TEXT`
 - Timestamps are ISO 8601 UTC: `datetime.utcnow().isoformat() + 'Z'`
 - Tokens/credentials are always Fernet-encrypted before SQLite write

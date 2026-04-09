@@ -65,9 +65,9 @@ class SemanticCache:
 
         threshold = self._task_thresholds.get(task_type, self._threshold)
 
-        results = self.qdrant.search(
+        response = self.qdrant.query_points(
             collection_name=COLLECTION,
-            query_vector=embedding,
+            query=embedding,
             query_filter=Filter(
                 must=[
                     FieldCondition(key="task_type", match=MatchValue(value=task_type)),
@@ -78,6 +78,7 @@ class SemanticCache:
             score_threshold=threshold,
             with_payload=True,
         )
+        results = response.points or []
 
         if not results:
             return None

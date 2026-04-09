@@ -733,12 +733,13 @@ embed("warmup")   # triggers sentence-transformers download if not cached
 
 This prevents a surprise 200ms delay on the first `orchestrator route` call.
 
-After the success panel, init attempts an interactive provider handoff:
-- If terminal is interactive and `questionary` is available: show arrow-key picker (`openai`, `anthropic`, `gemini`, `groq`) and run `connect` immediately for the selection.
-- If non-interactive, unavailable, or cancelled: print explicit fallback `orchestrator connect <provider>` commands and exit without error.
-- Interactivity gating checks `sys.stdin.isatty()`, `sys.stdout.isatty()`, and Rich console terminal support before launching picker.
-- If `questionary` is missing, print dependency guidance to install extras in active venv: `pip install -e ".[dev]"`.
-- API key behavior during init handoff stays aligned with connect UX: env/dotenv first, then hidden prompt fallback.
+After the success panel, init runs an interactive provider handoff **loop**:
+- Shows arrow-key picker (`openai`, `anthropic`, `gemini`, `groq`, `Skip for now`).
+- After a successful connect, loops back to the picker so additional providers can be connected in the same session.
+- "Skip for now" exits the loop and proceeds to the TUI.
+- On success or skip, **automatically launches the immersive TUI** (if TTY) so the user stays in the application.
+- If non-interactive, unavailable, or cancelled: print fallback `orchestrator connect <provider>` commands.
+- API key lookup: env/dotenv first, then hidden prompt fallback.
 
 ---
 
@@ -815,3 +816,44 @@ After the success panel, init attempts an interactive provider handoff:
 - Postgres
 - MCP server
 - Strong subprocess **network** isolation (`network_disabled` is documented only for now)
+
+---
+
+## Completed features (ship log)
+
+This section tracks features that have been fully implemented and merged to `main`. Update it whenever a feature is verified working.
+
+### TUI — Immersive full-screen shell (`feat/immersive-tui`)
+- `orchestrator` (no args, interactive TTY) launches a full-screen Textual TUI.
+- `orchestrator shell` is an explicit alias.
+- **Architecture**: `cli/tui/app.py` (OrchestratorApp + SessionState + StatusBar + SidePanel), `cli/tui/dispatcher.py` (command parser → service layer, Rich captures), `cli/tui/style.tcss`.
+- Key bindings: `Ctrl+Q` quit, `Ctrl+L` clear, `↑↓` command history, `Escape`/`Ctrl+C` clear input.
+- Status bar: live provider count, cache on/off, quality, session cost.
+- After `connect`, `init`, or `accounts` commands the status bar refreshes automatically.
+- Dispatcher returns Rich renderables **or** Textual `Widget` instances; the app mounts widgets into the output panel.
+
+### Init — provider picker loop + auto TUI launch (`feat/immersive-tui`)
+- `orchestrator init` ends with a **looping** arrow-key provider picker (not single-shot).
+- After connecting a provider, the picker reappears — connect more or choose "Skip for now".
+- On completion, the TUI launches automatically on interactive TTYs.
+
+### Connect — env/dotenv API key precedence (`feat/connect-env-api-keys`)
+- Lookup order: `--api-key` flag → `.env` / environment variable → hidden terminal prompt.
+- Variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `GEMINI_API_KEY`.
+- `python-dotenv` loads `.env` from repo root once per process.
+
+### Accounts widget — Kill Account + View ID buttons (`main`)
+- `accounts list` in TUI opens an interactive `AccountsWidget` (Textual `DataTable`).
+- **Kill Account** button (red, `variant="error"`) + `D` key: disconnects the selected row, removes from table, refreshes status bar. Auto-closes when last account removed.
+- **View ID** button (`V` key): shows full UUID in a toast notification (12-second timeout).
+- `Esc` dismisses the widget.
+- `accounts disconnect <partial-id>` from CLI uses prefix matching — no need to type the full UUID.
+
+### Dynamic model discovery (`feat/full-model-discovery`)
+- **OpenAI connector**: calls `/v1/models` to discover all models the API key has access to (not a hardcoded 3). Catalog covers GPT-4o, GPT-4.1, GPT-5/5.4, o1/o3/o4 reasoning, Codex family, GPT-4 Turbo, GPT-3.5. Dated version aliases (e.g. `gpt-4o-2024-08-06`) resolved by prefix match. Unknown models classified by heuristic (nano/micro → small, mini → small, pro/max/ultra → large).
+- **Anthropic connector**: same pattern — calls `/v1/models`, catalog covers Claude 4.x, 3.7, 3.5, 3, 2, Instant. Both connectors fall back to a hardcoded 3-model list if the API is unreachable. Results sorted cheapest-input-first.
+
+### Key conventions added/clarified
+- **`cli/tui/widgets.py`**: home for all Textual interactive widgets. Import here, never from `app.py`, to avoid circular imports.
+- **Widget mounting**: `OrchestratorApp.on_input_submitted` detects `Widget` instances in dispatcher results and mounts them into `#output-panel` above the `RichLog`. `__clear__` sentinel and `Ctrl+L` remove all mounted `AccountsWidget` instances.
+- **`account_service._resolve_account()`**: prefix-based lookup for `disconnect_account` and `sync_account` — partial IDs accepted.

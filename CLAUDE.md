@@ -118,7 +118,7 @@ orchestrator_cli/
 │   │   └── adapter.py            ← OpenAI-compatible + tools
 │   └── gemini/
 │       ├── connector.py
-│       └── adapter.py            ← text generation for route; agent tools TBD
+│       └── adapter.py            ← text generation + chat_with_tools (google-genai)
 │
 ├── db/
 │   ├── session.py
@@ -450,7 +450,7 @@ CREATE TABLE tool_calls (
 
 - **Semantic cache**: **not** used for agent LLM turns. Message history and tool results are unique per run; only `orchestrator route` uses the cache pipeline above.
 - **Tool definitions**: Single source in `schemas/tools.py` (`AGENT_TOOLS_OPENAI`). OpenAI and Groq use native function calling; Anthropic’s adapter maps the same shapes to the Messages API.
-- **Model selection for each turn**: `agent_chat_turn()` in `core/llm_turn.py` lists **all** enabled models with `supports_tools`, intersects with **`AGENT_TOOL_PROVIDERS`** (`openai`, `anthropic`, `groq`), then `model_selector` picks the cheapest that fits context + quality. **Gemini** is excluded until `GeminiAdapter.chat_with_tools` exists — text-only `route` still uses Gemini when connected.
+- **Model selection for each turn**: `agent_chat_turn()` in `core/llm_turn.py` lists **all** enabled models with `supports_tools`, intersects with **`AGENT_TOOL_PROVIDERS`** (`openai`, `anthropic`, `groq`, `gemini`), then `model_selector` picks the cheapest that fits context + quality.
 - **Execution**: `agent/dispatcher.py` routes tool names to `agent/tools/*` under `sandbox_root` from `[agent]` config. Shell is **off** by default; optional allow-list style blocking via `blocked_shell_patterns`.
 - **Persistence**: Tool calls may be written through `db/repositories/tool_calls.py`.
 
@@ -745,7 +745,6 @@ This prevents a surprise 200ms delay on the first `orchestrator route` call.
 
 - OAuth 2.0 (V0 uses API keys / PAT everywhere)
 - Hard budget enforcement (warn-only in V1)
-- **Gemini agent tool rounds** — connector + text `generate` exist; `chat_with_tools` not implemented yet
 - FastAPI wrapper
 - Web UI
 - Postgres

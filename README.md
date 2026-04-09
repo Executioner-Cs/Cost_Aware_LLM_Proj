@@ -125,7 +125,7 @@ openai      gpt-4o                 balanced  128k    $2.50     $10.00
 
 ### `orchestrator agent …`
 
-Sandboxed tool-using agent. Each **turn** picks the cheapest **tool-capable** model among OpenAI, Anthropic, and Groq (Gemini text chat works for `orchestrator route`; agent tool rounds exclude Gemini until tool-calling is implemented there).
+Sandboxed tool-using agent. Each **turn** picks the cheapest **tool-capable** model among OpenAI, Anthropic, Groq, and Gemini (all use the same unified tool schema; adapters translate to each API).
 
 | Command | Description |
 |--------|-------------|
@@ -183,7 +183,7 @@ orchestrator_cli/
 │   ├── anthropic/          ← Messages API + tool calling
 │   ├── openai/             ← Chat Completions + tools
 │   ├── groq/               ← OpenAI-compatible endpoint + tools
-│   └── gemini/             ← Google GenAI (text `route`; agent tools TBD)
+│   └── gemini/             ← Google GenAI (text `route` + `chat_with_tools`)
 ├── db/                     ← SQLAlchemy ORM + repositories
 │   ├── models.py           ← accounts, model_registry, traces, cache_entries, tool_calls
 │   └── repositories/       ← CRUD per table
@@ -297,8 +297,8 @@ Tests cover:
 ## Roadmap
 
 - [ ] OAuth 2.0 (V2)
-- [ ] Gemini connector
+- [x] Gemini connector and agent `chat_with_tools`
 - [ ] Hard budget enforcement (warn-only in V1)
-- [ ] Agent / tool-use routing
+- [x] Agent / tool-use routing (CLI `orchestrator agent`)
 - [ ] FastAPI wrapper
 - [ ] Postgres support

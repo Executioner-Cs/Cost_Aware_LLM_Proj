@@ -4,9 +4,9 @@ Does not use semantic cache (agent steps are non-deterministic).
 
 Model selection is **global across all connected accounts**: every enabled row
 in ``model_registry`` (from Anthropic, OpenAI, Groq, Gemini, …) is eligible,
-subject to tool support. The cheapest model that satisfies the ``tools`` task
-and quality tier wins; the correct account key is resolved via that row's
-``account_id``.
+subject to tool support and ``AGENT_TOOL_PROVIDERS``. The cheapest model that
+satisfies the ``tools`` task and quality tier wins; the correct account key is
+resolved via that row's ``account_id``.
 """
 from __future__ import annotations
 
@@ -24,7 +24,9 @@ from utils.crypto import decrypt
 # Providers whose adapter implements chat_with_tools end-to-end. Others are
 # excluded from agent tool rounds so we never select a model that cannot run
 # the unified tool schema (add a provider here when its adapter is ready).
-AGENT_TOOL_PROVIDERS: frozenset[str] = frozenset({"openai", "anthropic", "groq"})
+AGENT_TOOL_PROVIDERS: frozenset[str] = frozenset(
+    {"openai", "anthropic", "groq", "gemini"}
+)
 
 
 def _get_adapter(provider: str):

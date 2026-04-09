@@ -40,7 +40,7 @@ def test_agent_chat_turn_picks_cheapest_among_multiple_providers():
     cheap_groq = _model("1", "groq", cost_in=0.05, cost_out=0.08)
     pricey_openai = _model("2", "openai", cost_in=1.0, cost_out=2.0)
     anthropic = _model("3", "anthropic", cost_in=0.5, cost_out=0.5)
-    gemini_only = _model("4", "gemini", cost_in=0.01, cost_out=0.01)
+    cheap_gemini = _model("4", "gemini", cost_in=0.01, cost_out=0.01)
 
     mock_session = MagicMock()
     mock_account = MagicMock()
@@ -52,11 +52,11 @@ def test_agent_chat_turn_picks_cheapest_among_multiple_providers():
         input_tokens=1,
         output_tokens=1,
         latency_ms=1,
-        model_id="m-groq",
-        provider="groq",
+        model_id="m-gemini",
+        provider="gemini",
     )
 
-    with patch("core.llm_turn.list_enabled", return_value=[pricey_openai, anthropic, cheap_groq, gemini_only]):
+    with patch("core.llm_turn.list_enabled", return_value=[pricey_openai, anthropic, cheap_groq, cheap_gemini]):
         with patch("core.llm_turn.get_account", return_value=mock_account):
             with patch("core.llm_turn.decrypt", return_value="key"):
                 with patch("core.llm_turn._get_adapter") as ga:
@@ -69,20 +69,43 @@ def test_agent_chat_turn_picks_cheapest_among_multiple_providers():
                         [],
                     )
 
-    assert out.provider == "groq"
+    assert out.provider == "gemini"
     ga.return_value.chat_with_tools.assert_called_once()
     call_args = ga.return_value.chat_with_tools.call_args[0]
-    assert call_args[1] == "m-groq"
+    assert call_args[1] == "m-gemini"
 
 
-def test_gemini_excluded_until_adapter_supports_tools():
-    """Gemini rows must not be selected for agent turns (no chat_with_tools yet)."""
+def test_agent_chat_turn_with_only_gemini_succeeds():
+    """Single Gemini model with tools support runs agent turn."""
     gemini = _model("g1", "gemini", cost_in=0.001, cost_out=0.001)
 
     mock_session = MagicMock()
+    mock_account = MagicMock()
+    mock_account.encrypted_token = b"enc"
+
+    fake_turn = AgentTurnResult(
+        text="done",
+        tool_calls=[],
+        input_tokens=2,
+        output_tokens=3,
+        latency_ms=5,
+        model_id="m-gemini",
+        provider="gemini",
+    )
+
     with patch("core.llm_turn.list_enabled", return_value=[gemini]):
-        try:
-            llm_turn.agent_chat_turn(mock_session, [{"role": "user", "content": "x"}], [])
-            raise AssertionError("expected RuntimeError")
-        except RuntimeError as e:
-            assert "No models from providers with agent tool support" in str(e)
+        with patch("core.llm_turn.get_account", return_value=mock_account):
+            with patch("core.llm_turn.decrypt", return_value="key"):
+                with patch("core.llm_turn._get_adapter") as ga:
+                    mock_ad = MagicMock()
+                    mock_ad.chat_with_tools.return_value = fake_turn
+                    ga.return_value = mock_ad
+                    out = llm_turn.agent_chat_turn(
+                        mock_session,
+                        [{"role": "user", "content": "x"}],
+                        [{"type": "function", "function": {"name": "read_file", "parameters": {}}}],
+                    )
+
+    assert out.provider == "gemini"
+    assert out.text == "done"
+    ga.return_value.chat_with_tools.assert_called_once()

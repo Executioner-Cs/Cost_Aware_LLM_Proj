@@ -37,6 +37,18 @@ show_cost = true
 show_tokens = true
 show_route_reason = true
 show_cache_similarity = true
+
+[agent]
+# Sandbox root for agent tools (paths resolved relative to cwd if relative).
+sandbox_root = "."
+max_iterations = 8
+max_file_bytes = 1048576
+max_subprocess_seconds = 120
+allow_shell = false
+# Comma-separated substrings; shell commands containing any are rejected.
+blocked_shell_patterns = "rm -rf,mkfs,dd if=,:(){:|:&};:"
+# Documentary: true OS-level network isolation is not enforced; keep false for local dev caution.
+network_disabled = true
 """
 
 

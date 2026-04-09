@@ -5,8 +5,8 @@ Every provider must implement these interfaces.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
+from typing import Any, Optional
 
 
 @dataclass
@@ -32,6 +32,27 @@ class GenerateResult:
     latency_ms: int
     model_id: str
     provider: str
+
+
+@dataclass
+class ToolCallPart:
+    """One tool invocation proposed by the model (OpenAI-compatible shape)."""
+    id: str
+    name: str
+    arguments_json: str
+
+
+@dataclass
+class AgentTurnResult:
+    """One chat completion turn that may include tool calls (agent path)."""
+    text: str
+    tool_calls: list[ToolCallPart]
+    input_tokens: int
+    output_tokens: int
+    latency_ms: int
+    model_id: str
+    provider: str
+    finish_reason: Optional[str] = None
 
 
 class BaseConnector(ABC):
@@ -77,3 +98,18 @@ class BaseAdapter(ABC):
         temperature: float = 0.0,
     ) -> GenerateResult:
         """Call the provider and return a GenerateResult."""
+
+    def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        model_id: str,
+        api_key: str,
+        tools: list[dict[str, Any]],
+        *,
+        max_tokens: int = 2048,
+        temperature: float = 0.0,
+    ) -> AgentTurnResult:
+        """OpenAI-style messages + tools; not all providers implement this."""
+        raise NotImplementedError(
+            f"Tool calling is not implemented for provider '{self.provider_name}'"
+        )

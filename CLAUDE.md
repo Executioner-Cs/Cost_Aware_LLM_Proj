@@ -7,11 +7,11 @@
 
 ## What this is
 
-A **local CLI tool for cost-aware, token-efficient LLM orchestration with semantic caching**.
+A **local CLI tool for cost-aware, token-efficient LLM orchestration with semantic caching**, plus an optional **sandboxed agent** that runs multi-step tool loops while still picking the cheapest suitable model **across every connected account**.
 
-Users connect their existing provider accounts (Anthropic, OpenAI, Gemini, etc.). The system discovers available models, normalizes them into a unified registry, and routes every prompt to the cheapest model that can satisfy the task — with a semantic cache layer that recognises when two differently-worded prompts are asking the same thing.
+Users connect provider accounts (**Anthropic**, **OpenAI**, **Groq**, **Google Gemini**). The system discovers models, normalizes them into one registry, and routes each prompt (and each agent LLM step) to the cheapest model that satisfies constraints — with a semantic cache on the single-shot `route` path that recognises when two differently-worded prompts are asking the same thing.
 
-**The core value**: one command, every model you already pay for, zero wasted tokens, and a cache that actually works in natural language.
+**The core value**: one command, every model you already pay for, zero wasted tokens where caching is safe, and a cache that actually works in natural language. Agent turns intentionally **skip** semantic cache (non-deterministic transcripts).
 
 ---
 
@@ -49,7 +49,7 @@ The cache key is `(embedding vector, task_type, quality)`. Qdrant handles vector
 | HTTP client | `httpx` | Used by all provider adapters |
 | Testing | `pytest` + `pytest-asyncio` | Standard |
 
-**Qdrant embedded mode**: runs inside the process via `qdrant-client[local]`. No Docker, no daemon, no network. Collection stored at `.orchestrator/qdrant/`. Zero-config for the user.
+**Qdrant embedded mode**: runs inside the process via `qdrant-client` (path-based local storage; no separate `[local]` pip extra in current releases). No Docker, no daemon, no network. Collection stored at `.orchestrator/qdrant/`. Zero-config for the user.
 
 **Why `all-MiniLM-L6-v2`**: 384 dimensions (small, fast), runs entirely locally, strong semantic similarity for short-to-medium text. The model is downloaded once on first `orchestrator init` and cached by `sentence-transformers`. No API call required for cache lookups — this is critical; you cannot call an LLM to check if you should call an LLM.
 
@@ -72,9 +72,23 @@ orchestrator_cli/
 │       ├── model.py              ← `orchestrator model list`
 │       ├── route.py              ← `orchestrator route <prompt> [flags]`
 │       ├── trace.py              ← `orchestrator trace list|show`
-│       └── cache.py              ← `orchestrator cache stats|clear|inspect`
+│       ├── cache.py              ← `orchestrator cache stats|clear|inspect|threshold`
+│       └── agent.py              ← `orchestrator agent run|edit|explain|fix-tests|refactor`
+│
+├── agent/
+│   ├── config.py                 ← `[agent]` TOML → AgentConfig
+│   ├── dispatcher.py             ← dispatch_tool(name, args) → sandboxed execution
+│   ├── loop.py                   ← run_agent_loop (ReAct-style)
+│   ├── planner.py                ← optional planning preamble / cheap route()
+│   ├── sandbox.py                ← path confinement under sandbox_root
+│   ├── tool_logging.py           ← optional SQLite tool_calls rows
+│   └── tools/
+│       ├── file_io.py
+│       ├── search.py
+│       └── execution.py          ← python / pytest / optional shell (guarded)
 │
 ├── services/
+│   ├── init_service.py
 │   ├── connect_service.py
 │   ├── account_service.py
 │   ├── model_service.py
@@ -82,7 +96,8 @@ orchestrator_cli/
 │   └── trace_service.py
 │
 ├── core/
-│   ├── router.py                 ← main pipeline
+│   ├── router.py                 ← main single-shot routing pipeline
+│   ├── llm_turn.py               ← agent chat turn: multi-account tool model pick (no cache)
 │   ├── classifier.py             ← task type detection
 │   ├── model_selector.py         ← cost+capability ranked selection
 │   ├── cost_estimator.py         ← token count × price math
@@ -91,25 +106,29 @@ orchestrator_cli/
 │   └── reasons.py                ← reason code constants
 │
 ├── providers/
-│   ├── base.py
+│   ├── base.py                   ← BaseAdapter.chat_with_tools (default: NotImplemented)
 │   ├── anthropic/
 │   │   ├── connector.py
-│   │   └── adapter.py
+│   │   └── adapter.py            ← Messages API + tool use
 │   ├── openai/
 │   │   ├── connector.py
-│   │   └── adapter.py
+│   │   └── adapter.py            ← Chat Completions + tools
+│   ├── groq/
+│   │   ├── connector.py
+│   │   └── adapter.py            ← OpenAI-compatible + tools
 │   └── gemini/
 │       ├── connector.py
-│       └── adapter.py
+│       └── adapter.py            ← text generation for route; agent tools TBD
 │
 ├── db/
 │   ├── session.py
-│   ├── models.py                 ← ORM table definitions
+│   ├── models.py                 ← ORM: accounts, model_registry, traces, cache_entries, tool_calls
 │   └── repositories/
 │       ├── accounts.py
 │       ├── models.py
 │       ├── traces.py
-│       └── cache.py              ← SQLite payload CRUD for cache entries
+│       ├── cache.py              ← cache_entries CRUD
+│       └── tool_calls.py
 │
 ├── embeddings/
 │   ├── embedder.py               ← loads sentence-transformers model, exposes embed()
@@ -118,7 +137,8 @@ orchestrator_cli/
 ├── schemas/
 │   ├── account.py
 │   ├── routing.py                ← RouteRequest, RouteResult
-│   └── trace.py
+│   ├── trace.py
+│   └── tools.py                  ← AGENT_TOOLS_OPENAI (wire format; adapters translate)
 │
 ├── utils/
 │   ├── crypto.py
@@ -127,10 +147,12 @@ orchestrator_cli/
 │
 └── tests/
     ├── test_classifier.py
-    ├── test_cost_estimator.py
-    ├── test_model_selector.py
+    ├── test_router.py
     ├── test_semantic_cache.py
-    └── test_router.py
+    ├── test_agent_*.py
+    ├── test_llm_turn_providers.py
+    ├── test_providers_groq_gemini.py
+    └── …                         ← see tests/ for full list
 ```
 
 ---
@@ -353,6 +375,22 @@ CREATE TABLE cache_entries (
 
 `hit_count` and `last_hit_at` enable cache analytics via `orchestrator cache stats`.
 
+### `tool_calls`
+
+Optional structured log of agent (or future orchestrator) tool invocations.
+
+```sql
+CREATE TABLE tool_calls (
+  id           TEXT PRIMARY KEY,
+  trace_id     TEXT REFERENCES traces(id),
+  name         TEXT NOT NULL,
+  args_json    TEXT NOT NULL,
+  result_json  TEXT,
+  duration_ms  INTEGER,
+  created_at   TEXT NOT NULL
+);
+```
+
 ---
 
 ## Full routing pipeline (`core/router.py`)
@@ -405,6 +443,16 @@ CREATE TABLE cache_entries (
     → full metadata: tokens, actual cost, latency, model, route_reason
     → return RouteResult to CLI layer
 ```
+
+---
+
+## Agent stack (`agent/` + `core/llm_turn.py`)
+
+- **Semantic cache**: **not** used for agent LLM turns. Message history and tool results are unique per run; only `orchestrator route` uses the cache pipeline above.
+- **Tool definitions**: Single source in `schemas/tools.py` (`AGENT_TOOLS_OPENAI`). OpenAI and Groq use native function calling; Anthropic’s adapter maps the same shapes to the Messages API.
+- **Model selection for each turn**: `agent_chat_turn()` in `core/llm_turn.py` lists **all** enabled models with `supports_tools`, intersects with **`AGENT_TOOL_PROVIDERS`** (`openai`, `anthropic`, `groq`), then `model_selector` picks the cheapest that fits context + quality. **Gemini** is excluded until `GeminiAdapter.chat_with_tools` exists — text-only `route` still uses Gemini when connected.
+- **Execution**: `agent/dispatcher.py` routes tool names to `agent/tools/*` under `sandbox_root` from `[agent]` config. Shell is **off** by default; optional allow-list style blocking via `blocked_shell_patterns`.
+- **Persistence**: Tool calls may be written through `db/repositories/tool_calls.py`.
 
 ---
 
@@ -465,7 +513,7 @@ Shows the stored response, original prompt, similarity scores of recent hits, an
 
 Removes entries from both Qdrant and SQLite. Filters optional.
 
-### `orchestrator cache threshold set <value>`
+### `orchestrator cache threshold <value>`
 
 Adjusts similarity threshold in `config.toml`. Effective immediately for subsequent calls.
 
@@ -478,9 +526,11 @@ Adjusts similarity threshold in `config.toml`. Effective immediately for subsequ
 ```bash
 orchestrator connect anthropic
 orchestrator connect openai
+orchestrator connect groq
+orchestrator connect gemini
 ```
 
-Auth flow (PAT in V0, OAuth in V2). Pulls model list. Populates `model_registry`.
+Auth flow: API key (PAT) in V0; OAuth in V2. Pulls model list. Populates `model_registry`. Only **connected** providers participate in routing.
 
 ### `orchestrator accounts list|sync|disconnect`
 
@@ -534,6 +584,20 @@ Answer
 [cached response]
 ```
 
+### `orchestrator agent …`
+
+Multi-step tool loop with sandboxed file I/O, search, Python/pytest, and optional shell.
+
+```bash
+orchestrator agent run "Implement feature X in src/foo.py"
+orchestrator agent edit path/to/file.py "Add docstrings"
+orchestrator agent explain path/to/file.py
+orchestrator agent fix-tests
+orchestrator agent refactor src/ "Extract shared helper"
+```
+
+Common flags on `run`: `--quality`, `--max-iterations`, `--plan`, `--plan-llm`. See `orchestrator agent run --help`.
+
 ### `orchestrator trace list|show`
 
 Traces include `cache_similarity` score on hits so you can see exactly why something was served from cache.
@@ -583,7 +647,18 @@ show_cost = true
 show_tokens = true
 show_route_reason = true
 show_cache_similarity = true
+
+[agent]
+sandbox_root = "."
+max_iterations = 8
+max_file_bytes = 1048576
+max_subprocess_seconds = 120
+allow_shell = false
+blocked_shell_patterns = "rm -rf,mkfs,dd if=,:(){:|:&};:"
+network_disabled = true
 ```
+
+`network_disabled` documents intent for future hardening; it is not full OS-level network isolation.
 
 ---
 
@@ -592,7 +667,7 @@ show_cache_similarity = true
 ```
 .orchestrator/
 ├── config.toml          ← default config written
-├── orchestrator.db      ← SQLite file, all four tables created
+├── orchestrator.db      ← SQLite file, all tables created (including tool_calls)
 └── qdrant/              ← Qdrant embedded store directory
     └── collection/
         └── semantic_cache/
@@ -649,6 +724,7 @@ This prevents a surprise 200ms delay on the first `orchestrator route` call.
 
 ## Key conventions
 
+- **Virtual environment**: Use a project-local venv (e.g. `.venv/`). **Activate it before any `pip install` or dependency change** so packages and tests use the same interpreter. Do not install project dependencies into the system Python when working on this repo.
 - IDs are `uuid4` strings stored as `TEXT`
 - Timestamps are ISO 8601 UTC: `datetime.utcnow().isoformat() + 'Z'`
 - Tokens/credentials are always Fernet-encrypted before SQLite write
@@ -658,6 +734,8 @@ This prevents a surprise 200ms delay on the first `orchestrator route` call.
 - `semantic_cache.py` is the only module that touches Qdrant
 - `db/repositories/cache.py` is the only module that reads/writes `cache_entries` in SQLite
 - These two are always called together by `core/router.py` — never independently from other modules
+- `db/repositories/tool_calls.py` owns `tool_calls` rows; agent code may log through it
+- Agent LLM turns go through `core/llm_turn.py` + provider `chat_with_tools`, not `router.route()`’s cache path
 - Reason codes always imported from `core/reasons.py`
 - `rich` for all terminal output — no bare `print()`
 
@@ -665,11 +743,11 @@ This prevents a surprise 200ms delay on the first `orchestrator route` call.
 
 ## What is out of scope for V0–V1
 
-- OAuth 2.0 (V0 uses PAT everywhere)
-- Gemini connector
+- OAuth 2.0 (V0 uses API keys / PAT everywhere)
 - Hard budget enforcement (warn-only in V1)
-- Agent / tool-use routing
+- **Gemini agent tool rounds** — connector + text `generate` exist; `chat_with_tools` not implemented yet
 - FastAPI wrapper
 - Web UI
 - Postgres
 - MCP server
+- Strong subprocess **network** isolation (`network_disabled` is documented only for now)

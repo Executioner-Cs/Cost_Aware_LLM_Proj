@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
-from providers.base import BaseAdapter, GenerateResult
+from providers.base import AgentTurnResult, BaseAdapter, GenerateResult
 
 
 class GeminiAdapter(BaseAdapter):
@@ -53,4 +54,18 @@ class GeminiAdapter(BaseAdapter):
             latency_ms=latency_ms,
             model_id=model_id,
             provider="gemini",
+        )
+
+    def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        model_id: str,
+        api_key: str,
+        tools: list[dict[str, Any]],
+        *,
+        max_tokens: int = 2048,
+        temperature: float = 0.0,
+    ) -> AgentTurnResult:
+        raise NotImplementedError(
+            "Gemini multi-turn tool calling is not implemented yet; connect OpenAI, Groq, or Anthropic for agents."
         )

@@ -49,11 +49,22 @@ def run_python(
     )
 
 
+def _shell_blocked(command: str, patterns: list[str] | None) -> str | None:
+    if not patterns:
+        return None
+    low = command.lower()
+    for p in patterns:
+        if p and p.lower() in low:
+            return f"command matched blocked pattern: {p!r}"
+    return None
+
+
 def run_shell(
     sandbox: Sandbox,
     command: str,
     *,
     allow_shell: bool = False,
+    blocked_shell_patterns: list[str] | None = None,
     timeout_sec: float = 30.0,
     session: Session | None = None,
     trace_id: Optional[str] = None,
@@ -66,6 +77,9 @@ def run_shell(
                 "stdout": "",
                 "stderr": "",
             }
+        blocked = _shell_blocked(command, blocked_shell_patterns)
+        if blocked:
+            return {"ok": False, "error": blocked, "stdout": "", "stderr": ""}
         try:
             proc = subprocess.run(
                 command,

@@ -2,7 +2,7 @@
 
 > A local CLI tool for **cost-aware, token-efficient LLM orchestration with semantic caching**.
 
-Connect your existing provider accounts (Anthropic, OpenAI), and the system routes every prompt to the cheapest model that can satisfy the task — with a semantic cache layer that recognises when two differently-worded prompts are asking the same thing.
+Connect your existing provider accounts (**Anthropic**, **OpenAI**, **Groq**, **Google Gemini**), and the system routes every prompt to the cheapest model that can satisfy the task — with a semantic cache layer that recognises when two differently-worded prompts are asking the same thing. An optional **agent** mode runs a tool loop (read/write/search/run/tests) under a configurable sandbox, still routing each LLM step across **all** connected tool-capable models.
 
 **The core value proposition**: one command, every model you already pay for, zero wasted tokens, and a cache that actually works in natural language.
 
@@ -11,7 +11,8 @@ Connect your existing provider accounts (Anthropic, OpenAI), and the system rout
 ## Features
 
 - **Semantic cache** — "Summarize this doc" and "Give me a summary of this doc" both hit the same cache entry. Powered by `all-MiniLM-L6-v2` running entirely locally (no API call needed for lookups).
-- **Multi-provider routing** — Anthropic and OpenAI models normalised into a unified registry. Cheapest model that satisfies constraints wins.
+- **Multi-provider routing** — Anthropic, OpenAI, Groq, and Gemini models normalised into one registry. Cheapest model that satisfies constraints wins. Connect as many accounts as you like; all enabled models compete for each request (and for each agent step).
+- **Agent tools** — `orchestrator agent` runs a ReAct-style loop with sandboxed file I/O, codebase search, Python execution, optional shell (off by default), and pytest. Tool definitions are provider-neutral; OpenAI/Groq use native function calling, Anthropic’s API is adapted internally. **Semantic cache is not used for agent LLM steps** (non-deterministic transcripts).
 - **Task classification** — Automatically detects `simple`, `json_extract`, `reasoning`, `vision`, and `tools` task types from the prompt.
 - **Cost tracking** — Every request is traced with token counts, USD cost, latency, and cache similarity score.
 - **Zero-config vector store** — Qdrant runs embedded (in-process), no Docker or server required.
@@ -23,11 +24,23 @@ Connect your existing provider accounts (Anthropic, OpenAI), and the system rout
 
 ### 1. Install
 
+Create and **activate** a virtual environment first (so dependencies land in the project venv, not the system Python). Then install the package in editable mode with dev extras.
+
 ```bash
 git clone https://github.com/Executioner-Cs/Cost_Aware_LLM_Proj.git
 cd Cost_Aware_LLM_Proj
+python -m venv .venv
+
+# Windows (PowerShell)
+.\.venv\Scripts\Activate.ps1
+
+# macOS / Linux
+# source .venv/bin/activate
+
 pip install -e ".[dev]"
 ```
+
+Always activate `.venv` before running `pip install` or `pip` upgrades in this repo.
 
 ### 2. Initialise
 
@@ -41,8 +54,12 @@ Creates `~/.orchestrator/` with `config.toml`, `orchestrator.db`, and the Qdrant
 
 ```bash
 orchestrator connect anthropic   # prompts for API key
-orchestrator connect openai      # prompts for API key
+orchestrator connect openai
+orchestrator connect groq
+orchestrator connect gemini
 ```
+
+Each successful connect validates the key and registers that provider’s models. Only **connected** providers participate in routing.
 
 ### 4. Route a prompt
 
@@ -90,7 +107,7 @@ Latency    0.012s
 Set up the home directory, SQLite database, Qdrant collection, and warm up the embedding model.
 
 ### `orchestrator connect <provider>`
-Connect an Anthropic or OpenAI account using a Personal Access Token (API key). Validates the key and populates the model registry.
+Connect a provider using an API key (PAT). Validates the key and populates the model registry. Providers: `anthropic`, `openai`, `groq`, `gemini`.
 
 ### `orchestrator accounts list|sync|disconnect`
 Manage connected accounts. `sync` re-validates the key and refreshes the model list.
@@ -105,6 +122,20 @@ anthropic   claude-sonnet-4-6      balanced  200k    $3.00     $15.00
 openai      gpt-4o-mini            small     128k    $0.15     $0.60
 openai      gpt-4o                 balanced  128k    $2.50     $10.00
 ```
+
+### `orchestrator agent …`
+
+Sandboxed tool-using agent. Each **turn** picks the cheapest **tool-capable** model among OpenAI, Anthropic, and Groq (Gemini text chat works for `orchestrator route`; agent tool rounds exclude Gemini until tool-calling is implemented there).
+
+| Command | Description |
+|--------|-------------|
+| `agent run "<goal>"` | Full loop: `--quality`, `--max-iterations`, `--plan`, `--plan-llm` |
+| `agent edit <file> "<instruction>"` | Shorthand goal to read/modify one file |
+| `agent explain <file>` | Read and explain a file |
+| `agent fix-tests` | Run tests and iterate on fixes |
+| `agent refactor <target> "<instruction>"` | Refactor with planning preamble |
+
+Configure limits and sandbox root under `[agent]` in `config.toml` (see below). **Shell commands are disabled by default** (`allow_shell = false`). Set `allow_shell = true` only in trusted environments.
 
 ### `orchestrator route <prompt> [flags]`
 
@@ -135,10 +166,12 @@ Browse routing history. Every trace includes cache hit status, similarity score,
 ```
 orchestrator_cli/
 ├── cli/                    ← Typer CLI entry points
-│   └── commands/           ← connect, accounts, model, route, trace, cache
+│   └── commands/           ← connect, accounts, model, route, trace, cache, agent
+├── agent/                  ← Sandbox, tool loop, dispatcher, planner, config
 ├── services/               ← Business logic (connect, account, model, trace, init)
 ├── core/                   ← Routing pipeline modules
 │   ├── router.py           ← 10-step routing pipeline
+│   ├── llm_turn.py         ← Agent chat turn (no semantic cache; multi-provider)
 │   ├── classifier.py       ← Task type detection (keyword/heuristic)
 │   ├── model_selector.py   ← Cost-ranked model selection (pure logic)
 │   ├── cost_estimator.py   ← Token count × price math
@@ -146,16 +179,18 @@ orchestrator_cli/
 │   ├── semantic_cache.py   ← Qdrant + SQLite cache layer
 │   └── reasons.py          ← Route reason code constants
 ├── providers/              ← Provider connectors and adapters
-│   ├── base.py             ← BaseConnector, BaseAdapter ABCs
-│   ├── anthropic/          ← Messages API
-│   └── openai/             ← Chat Completions API
+│   ├── base.py             ← BaseConnector, BaseAdapter, AgentTurnResult
+│   ├── anthropic/          ← Messages API + tool calling
+│   ├── openai/             ← Chat Completions + tools
+│   ├── groq/               ← OpenAI-compatible endpoint + tools
+│   └── gemini/             ← Google GenAI (text `route`; agent tools TBD)
 ├── db/                     ← SQLAlchemy ORM + repositories
-│   ├── models.py           ← 4 tables: accounts, models, traces, cache_entries
+│   ├── models.py           ← accounts, model_registry, traces, cache_entries, tool_calls
 │   └── repositories/       ← CRUD per table
 ├── embeddings/             ← sentence-transformers wrapper (singleton)
-├── schemas/                ← Pydantic v2 request/response models
+├── schemas/                ← Pydantic models + tools.py (agent tool definitions)
 ├── utils/                  ← Fernet crypto, Rich console, hashing
-└── tests/                  ← pytest suite (classifier, cost, selector, cache, router)
+└── tests/                  ← pytest (routing, cache, providers, agent, CLI)
 ```
 
 ### Semantic cache design
@@ -211,6 +246,15 @@ show_cost = true
 show_tokens = true
 show_route_reason = true
 show_cache_similarity = true
+
+[agent]
+sandbox_root = "."
+max_iterations = 8
+max_file_bytes = 1048576
+max_subprocess_seconds = 120
+allow_shell = false
+blocked_shell_patterns = "rm -rf,mkfs,dd if=,:(){:|:&};:"
+network_disabled = true   # documented intent; not full OS network isolation
 ```
 
 ---

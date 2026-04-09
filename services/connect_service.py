@@ -19,6 +19,8 @@ from utils.crypto import encrypt
 _PROVIDER_CONNECTOR_MAP: dict[str, str] = {
     "anthropic": "providers.anthropic.connector.AnthropicConnector",
     "openai": "providers.openai.connector.OpenAIConnector",
+    "groq": "providers.groq.connector.GroqConnector",
+    "gemini": "providers.gemini.connector.GeminiConnector",
 }
 
 

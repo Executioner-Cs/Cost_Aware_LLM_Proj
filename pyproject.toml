@@ -20,6 +20,7 @@ dependencies = [
     "tomllib; python_version < '3.11'",
     "anthropic>=0.28",
     "openai>=1.30",
+    "google-genai>=1.0",
 ]
 
 [project.scripts]

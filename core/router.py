@@ -33,6 +33,8 @@ def _get_adapter(provider: str):
     _MAP = {
         "anthropic": "providers.anthropic.adapter.AnthropicAdapter",
         "openai": "providers.openai.adapter.OpenAIAdapter",
+        "groq": "providers.groq.adapter.GroqAdapter",
+        "gemini": "providers.gemini.adapter.GeminiAdapter",
     }
     if provider not in _MAP:
         raise ValueError(f"No adapter for provider '{provider}'")

@@ -3,7 +3,7 @@ import typer
 from typing import Annotated
 
 def cmd_connect(
-    provider: Annotated[str, typer.Argument(help="Provider name: anthropic | openai")],
+    provider: Annotated[str, typer.Argument(help="Provider: anthropic | openai | groq | gemini")],
     api_key: Annotated[str, typer.Option(
         prompt=True, hide_input=True, help="API key (PAT)"
     )] = "",

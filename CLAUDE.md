@@ -532,6 +532,17 @@ orchestrator connect gemini
 
 Auth flow: API key (PAT) in V0; OAuth in V2. Pulls model list. Populates `model_registry`. Only **connected** providers participate in routing.
 
+API key lookup precedence:
+1. `--api-key` (if provided)
+2. repo-root `.env` / environment variables (loaded via `python-dotenv`)
+3. hidden terminal prompt
+
+Environment variables:
+- `ANTHROPIC_API_KEY`
+- `OPENAI_API_KEY`
+- `GROQ_API_KEY`
+- `GEMINI_API_KEY`
+
 ### `orchestrator accounts list|sync|disconnect`
 
 Manage connected provider accounts.

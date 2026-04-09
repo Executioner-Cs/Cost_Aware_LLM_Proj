@@ -56,11 +56,12 @@ def test_cmd_connect_reads_account_fields_before_session_close(monkeypatch):
     def fake_print_success(message):
         success_messages.append(message)
 
-    monkeypatch.setattr("db.session.get_session", fake_get_session)
-    monkeypatch.setattr("services.connect_service.connect", fake_connect)
-    monkeypatch.setattr("utils.console.console", _DummyConsole())
-    monkeypatch.setattr("utils.console.print_success", fake_print_success)
-    monkeypatch.setattr("utils.console.print_error", lambda _msg: None)
+    # cmd_connect imports these at module scope, so patch the cli.commands.connect module bindings.
+    monkeypatch.setattr("cli.commands.connect.get_session", fake_get_session)
+    monkeypatch.setattr("cli.commands.connect.svc_connect", fake_connect)
+    monkeypatch.setattr("cli.commands.connect.console", _DummyConsole())
+    monkeypatch.setattr("cli.commands.connect.print_success", fake_print_success)
+    monkeypatch.setattr("cli.commands.connect.print_error", lambda _msg: None)
 
     cmd_connect("openai", "dummy-key")
 

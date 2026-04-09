@@ -53,11 +53,28 @@ Creates `~/.orchestrator/` with `config.toml`, `orchestrator.db`, and the Qdrant
 ### 3. Connect a provider
 
 ```bash
-orchestrator connect anthropic   # prompts for API key
+orchestrator connect anthropic   # uses .env/env var if present; otherwise prompts
 orchestrator connect openai
 orchestrator connect groq
 orchestrator connect gemini
 ```
+
+You can also pre-seed keys via a repo-root `.env` file (recommended for local dev):
+
+```bash
+cp .env.example .env
+```
+
+Then set keys like:
+
+```text
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+GROQ_API_KEY=gsk_...
+GEMINI_API_KEY=...
+```
+
+Pasting into a hidden prompt: your paste will work even though characters don’t show. In Windows Terminal, use `Ctrl+Shift+V` (or right-click paste).
 
 Each successful connect validates the key and registers that provider’s models. Only **connected** providers participate in routing.
 

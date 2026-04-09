@@ -2,22 +2,38 @@
 import typer
 from typing import Annotated
 
+from db.session import get_session
+from services.connect_service import connect as svc_connect
+from utils.console import console, print_error, print_success
+from utils.env import get_provider_api_key, load_dotenv_once
+
+
 def cmd_connect(
     provider: Annotated[str, typer.Argument(help="Provider: anthropic | openai | groq | gemini")],
-    api_key: Annotated[str, typer.Option(
-        prompt=True, hide_input=True, help="API key (PAT)"
-    )] = "",
+    api_key: Annotated[
+        str,
+        typer.Option(
+            "--api-key",
+            help="API key (PAT). If omitted, uses .env/env var; otherwise prompts.",
+            hide_input=True,
+        ),
+    ] = "",
 ):
     """Connect a provider account using an API key."""
-    from db.session import get_session
-    from services.connect_service import connect as svc_connect
-    from utils.console import console, print_success, print_error
-
     session = None
     try:
+        key = (api_key or "").strip()
+        if not key:
+            load_dotenv_once()
+            key = (get_provider_api_key(provider) or "").strip()
+        if not key:
+            key = typer.prompt("API key (PAT)", hide_input=True).strip()
+        if not key:
+            raise ValueError("API key is required (pass --api-key or set it in .env/environment variables).")
+
         with console.status(f"[cyan]Connecting to {provider}…"):
             session = get_session()
-            account = svc_connect(session, provider, api_key)
+            account = svc_connect(session, provider, key)
 
             # Avoid DetachedInstanceError after session close/commit expiry.
             account_id = account.id

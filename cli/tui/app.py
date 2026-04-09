@@ -25,6 +25,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
+from textual.widget import Widget
 from textual.widgets import (
     Header,
     Footer,
@@ -33,6 +34,7 @@ from textual.widgets import (
     RichLog,
     Static,
 )
+from cli.tui.widgets import AccountsWidget
 
 
 # ── Status bar widget ────────────────────────────────────────────────────────
@@ -177,14 +179,23 @@ class OrchestratorApp(App):
             output.write(Text(f"Internal error: {exc}", style="bold red"))
             return
 
+        has_widget = False
         for item in results:
             if item == "__quit__":
                 self.exit()
                 return
             elif item == "__clear__":
                 output.clear()
+                # Also remove any mounted interactive widgets
+                for w in self.query(AccountsWidget):
+                    w.remove()
                 self._write_separator()
                 return
+            elif isinstance(item, Widget):
+                # Mount interactive widget inside the output panel
+                output_panel = self.query_one("#output-panel", Container)
+                self.mount(item, before=output_panel.query_one("#output", RichLog))
+                has_widget = True
             else:
                 output.write(item)
 
@@ -196,9 +207,19 @@ class OrchestratorApp(App):
         if raw.startswith("route"):
             side.push(f"[dim]route[/dim] {raw[5:50]}")
 
+    # ── Widget messages ───────────────────────────────────────────────────────
+
+    def on_accounts_widget_disconnected(self, event: AccountsWidget.Disconnected) -> None:
+        """Refresh status bar whenever an account is disconnected via the widget."""
+        self._update_status()
+        # Return focus to input
+        self.query_one("#cmd-input", Input).focus()
+
     # ── Key bindings ─────────────────────────────────────────────────────────
 
     def action_clear_output(self) -> None:
+        for w in self.query(AccountsWidget):
+            w.remove()
         output = self.query_one("#output", RichLog)
         output.clear()
         self._write_separator()

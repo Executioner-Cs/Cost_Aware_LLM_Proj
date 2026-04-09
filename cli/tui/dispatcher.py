@@ -275,22 +275,11 @@ class Dispatcher:
 
         if sub == "list":
             from services.account_service import list_accounts
+            from cli.tui.widgets import AccountsWidget
             accounts = list_accounts(self.state.session)
             if not accounts:
                 return [Text("  No accounts connected. Run: connect <provider> --api-key ...", style="yellow")]
-            table = Table(title="Connected Accounts", border_style="cyan")
-            table.add_column("ID", style="dim")
-            table.add_column("Provider")
-            table.add_column("Name")
-            table.add_column("Status")
-            table.add_column("Synced")
-            for a in accounts:
-                table.add_row(
-                    a.id[:8] + "…", a.provider,
-                    a.display_name or "—", a.status,
-                    (a.last_synced_at or "—")[:10],
-                )
-            return [table]
+            return [AccountsWidget(accounts, self.state.session)]
 
         elif sub == "sync":
             if len(args) < 2:

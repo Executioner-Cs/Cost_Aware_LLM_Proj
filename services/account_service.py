@@ -21,10 +21,7 @@ def sync_account(session: Session, account_id: str) -> ConnectedAccount:
     from utils.crypto import decrypt
     from db.models import ModelRegistry
 
-    account = get_by_id(session, account_id)
-    if not account:
-        raise ValueError(f"Account '{account_id}' not found")
-
+    account = _resolve_account(session, account_id)
     api_key = decrypt(account.encrypted_token)
     connector = _load_connector(account.provider, api_key)
 
@@ -62,8 +59,21 @@ def sync_account(session: Session, account_id: str) -> ConnectedAccount:
     return account
 
 
-def disconnect_account(session: Session, account_id: str) -> None:
+def _resolve_account(session: Session, account_id: str) -> ConnectedAccount:
+    """Find by exact ID first, then by unique prefix."""
     account = get_by_id(session, account_id)
-    if not account:
-        raise ValueError(f"Account '{account_id}' not found")
+    if account:
+        return account
+    matches = [a for a in list_all(session) if a.id.startswith(account_id)]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(
+            f"Ambiguous prefix '{account_id}' matches {len(matches)} accounts — use more characters"
+        )
+    raise ValueError(f"Account '{account_id}' not found")
+
+
+def disconnect_account(session: Session, account_id: str) -> None:
+    account = _resolve_account(session, account_id)
     delete(session, account)

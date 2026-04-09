@@ -294,6 +294,17 @@ Tests cover:
 
 ---
 
+## Skills (Cursor Agent Skills)
+
+We also ship **project skills** as Markdown, to make repetitive workflows consistent (and safer) across contributors.
+
+- **Where they live**: `skills/<skill-name>/SKILL.md`
+- **What they contain**: purpose, when to use, step-by-step procedure, constraints (venv, sandbox rules, branch/PR discipline), and concrete examples
+
+If you add a new feature slice, prefer adding/updating a skill when it introduces a new recurring workflow (e.g. “add provider”, “ship agent tool”, “release checklist”).
+
+---
+
 ## Roadmap
 
 - [ ] OAuth 2.0 (V2)

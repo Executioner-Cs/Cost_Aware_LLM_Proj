@@ -725,6 +725,7 @@ This prevents a surprise 200ms delay on the first `orchestrator route` call.
 ## Key conventions
 
 - **Virtual environment**: Use a project-local venv (e.g. `.venv/`). **Activate it before any `pip install` or dependency change** so packages and tests use the same interpreter. Do not install project dependencies into the system Python when working on this repo.
+- **Skills**: If we add recurring workflows (providers, agent tools, release steps), capture them as Cursor Agent Skills in `skills/<name>/SKILL.md` so future work stays consistent.
 - IDs are `uuid4` strings stored as `TEXT`
 - Timestamps are ISO 8601 UTC: `datetime.utcnow().isoformat() + 'Z'`
 - Tokens/credentials are always Fernet-encrypted before SQLite write

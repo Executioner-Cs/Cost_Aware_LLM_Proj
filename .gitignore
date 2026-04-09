@@ -12,6 +12,7 @@ build/
 # Virtual environments
 .venv/
 venv/
+skills/**/.DS_Store
 env/
 
 # Orchestrator runtime

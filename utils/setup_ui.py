@@ -100,15 +100,7 @@ def render_init_success_panel(home: Path) -> None:
     lines.append(f"Config   : {home / 'config.toml'}\n", style="bright_white")
     lines.append(f"Database : {home / 'orchestrator.db'}\n", style="bright_white")
     lines.append(f"Vectors  : {home / 'qdrant'}\n", style="bright_white")
-    lines.append("\nNext: interactive provider handoff starts now.\n", style="bold bright_cyan")
-    lines.append("If interactive mode is unavailable or cancelled, use:\n", style="bright_white")
-    lines.append("- orchestrator connect openai\n", style="cyan")
-    lines.append("- orchestrator connect anthropic\n", style="cyan")
-    lines.append("- orchestrator connect gemini\n", style="cyan")
-    lines.append("- orchestrator connect groq\n", style="cyan")
-    lines.append("- orchestrator model list\n", style="cyan")
-    lines.append("- orchestrator route \"Summarize this text\"\n", style="cyan")
-    lines.append("- orchestrator agent run \"Implement feature X\"\n", style="cyan")
+    lines.append("\nLaunching orchestrator shell…\n", style="bold bright_cyan")
 
     panel = Panel(
         Align.left(lines),

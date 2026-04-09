@@ -97,7 +97,6 @@ def run_init(home: Path | None = None) -> None:
 
     print_success(f"Orchestrator initialised at [bold]{home}[/bold]")
     render_init_success_panel(home)
-    _run_post_init_connect_handoff()
 
 
 def _run_post_init_connect_handoff() -> None:

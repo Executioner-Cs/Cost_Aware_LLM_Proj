@@ -15,7 +15,9 @@ Layout:
 """
 from __future__ import annotations
 
-import sys
+import os
+import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +37,70 @@ from textual.widgets import (
     Static,
 )
 from cli.tui.widgets import AccountsWidget
+
+
+# ── Bootstrap session state ───────────────────────────────────────────────────
+
+@dataclass
+class SessionState:
+    """Lightweight bootstrap state for pre-TUI status checks and testing.
+
+    The live runtime state (with DB session, full config dict) lives in
+    ``cli.tui.dispatcher.SessionState``.  This lighter variant is used by
+    ``bootstrap_state()`` and as a fallback when creating the app without a
+    real backend (e.g. in tests).
+    """
+    initialised: bool = False
+    provider_count: int = 0
+    model_count: int = 0
+    cache_enabled: bool = True
+    default_quality: str = "balanced"
+    quality: str = "balanced"
+    cost_this_session: float = 0.0
+
+    def refresh_stats(self) -> None:
+        """No-op for the bootstrap variant; the dispatcher's SessionState
+        overrides this with real DB queries."""
+
+
+def bootstrap_state() -> SessionState:
+    """Build a quick-check SessionState from disk without opening the TUI.
+
+    Reads ``ORCHESTRATOR_HOME`` (or ``~/.orchestrator``), loads
+    ``config.toml`` if present, and optionally counts active providers
+    from the SQLite database.
+    """
+    home = Path(os.environ.get("ORCHESTRATOR_HOME", str(Path.home() / ".orchestrator")))
+    state = SessionState()
+
+    if not home.exists():
+        return state
+
+    config_path = home / "config.toml"
+    if not config_path.exists():
+        return state
+
+    state.initialised = True
+
+    try:
+        with open(config_path, "rb") as f:
+            config = tomllib.load(f)
+        state.cache_enabled = config.get("cache", {}).get("enabled", True)
+        state.default_quality = config.get("routing", {}).get("default_quality", "balanced")
+        state.quality = state.default_quality
+    except Exception:
+        pass
+
+    try:
+        from db.session import get_session
+        session = get_session(home / "orchestrator.db")
+        from db.repositories.accounts import list_all
+        accounts = list_all(session)
+        state.provider_count = len([a for a in accounts if a.status == "active"])
+    except Exception:
+        pass
+
+    return state
 
 
 # ── Status bar widget ────────────────────────────────────────────────────────
@@ -99,13 +165,38 @@ class SidePanel(Static):
 
 # ── Main Orchestrator App ────────────────────────────────────────────────────
 
-WELCOME = """\
-[bold cyan]╔══════════════════════════════════════════════════╗[/bold cyan]
-[bold cyan]║[/bold cyan]      [bold white]Orchestrator[/bold white] — Cost-Aware LLM Router      [bold cyan]║[/bold cyan]
-[bold cyan]╚══════════════════════════════════════════════════╝[/bold cyan]
-[dim]Type [bold]help[/bold] to see available commands.
-Type [bold]quit[/bold] or press Ctrl+Q to exit.[/dim]
-"""
+_BANNER_LINES = [
+    "  ██████╗ ██████╗  ██████╗██╗  ██╗███████╗███████╗████████╗██████╗  █████╗ ████████╗ ██████╗ ██████╗ ",
+    " ██╔═══██╗██╔══██╗██╔════╝██║  ██║██╔════╝██╔════╝╚══██╔══╝██╔══██╗██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗",
+    " ██║   ██║██████╔╝██║     ███████║█████╗  ███████╗   ██║   ██████╔╝███████║   ██║   ██║   ██║██████╔╝",
+    " ██║   ██║██╔══██╗██║     ██╔══██║██╔══╝  ╚════██║   ██║   ██╔══██╗██╔══██║   ██║   ██║   ██║██╔══██╗",
+    " ╚██████╔╝██║  ██║╚██████╗██║  ██║███████╗███████║   ██║   ██║  ██║██║  ██║   ██║   ╚██████╔╝██║  ██║",
+    "  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝",
+]
+
+_BANNER_GRADIENT = (
+    "bright_cyan bold",
+    "cyan bold",
+    "bright_blue bold",
+    "blue bold",
+    "magenta bold",
+    "bright_magenta bold",
+)
+
+
+def _build_welcome_text() -> Text:
+    t = Text()
+    for i, line in enumerate(_BANNER_LINES):
+        t.append(line + "\n", style=_BANNER_GRADIENT[i % len(_BANNER_GRADIENT)])
+    t.append("\n")
+    t.append("Type ", style="dim")
+    t.append("help", style="bold dim")
+    t.append(" to see available commands.  Type ", style="dim")
+    t.append("quit", style="bold dim")
+    t.append(" or press ", style="dim")
+    t.append("Ctrl+Q", style="bold dim")
+    t.append(" to exit.\n", style="dim")
+    return t
 
 
 class OrchestratorApp(App):
@@ -119,13 +210,15 @@ class OrchestratorApp(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", priority=True),
         Binding("ctrl+l", "clear_output", "Clear", show=True),
+        Binding("escape", "clear_input", "Clear Input", show=False),
+        Binding("ctrl+c", "clear_input", "Clear Input", show=False, priority=True),
         Binding("up",     "history_prev", "Prev",  show=False),
         Binding("down",   "history_next", "Next",  show=False),
     ]
 
-    def __init__(self, state, dispatcher) -> None:
+    def __init__(self, state=None, dispatcher=None) -> None:
         super().__init__()
-        self._state = state
+        self._state = state or SessionState()
         self._dispatcher = dispatcher
         self._history: list[str] = []
         self._history_pos: int = -1
@@ -141,7 +234,7 @@ class OrchestratorApp(App):
             yield SidePanel()
         with Horizontal(id="input-area"):
             yield Label("[bold cyan]orchestrator >[/bold cyan]  ", id="prompt-label")
-            yield Input(placeholder="type a command…", id="cmd-input")
+            yield Input(placeholder="orchestrator > type a command…", id="cmd-input")
         yield Footer()
 
     # ── On mount ─────────────────────────────────────────────────────────────
@@ -149,7 +242,7 @@ class OrchestratorApp(App):
     def on_mount(self) -> None:
         self._update_status()
         output = self.query_one("#output", RichLog)
-        output.write(WELCOME)
+        output.write(_build_welcome_text())
         self._write_separator()
         self.query_one("#cmd-input", Input).focus()
 
@@ -171,6 +264,10 @@ class OrchestratorApp(App):
 
         output = self.query_one("#output", RichLog)
         output.write(f"[bold cyan]orchestrator >[/bold cyan]  [bold]{raw}[/bold]")
+
+        if self._dispatcher is None:
+            output.write(Text("Dispatcher not available.", style="dim"))
+            return
 
         # Dispatch
         try:
@@ -217,6 +314,9 @@ class OrchestratorApp(App):
 
     # ── Key bindings ─────────────────────────────────────────────────────────
 
+    def action_clear_input(self) -> None:
+        self.query_one("#cmd-input", Input).value = ""
+
     def action_clear_output(self) -> None:
         for w in self.query(AccountsWidget):
             w.remove()
@@ -250,6 +350,12 @@ class OrchestratorApp(App):
     def _update_status(self) -> None:
         self._state.refresh_stats()
         self.query_one(StatusBar).update_from_state(self._state)
+        self.sub_title = (
+            f"providers: {self._state.provider_count}  "
+            f"models: {getattr(self._state, 'model_count', 0)}  "
+            f"{'cache ON' if self._state.cache_enabled else 'cache OFF'}  "
+            f"quality: {self._state.quality}"
+        )
 
     def _write_separator(self) -> None:
         self.query_one("#output", RichLog).write(Rule(style="dim"))

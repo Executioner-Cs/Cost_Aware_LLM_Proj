@@ -79,7 +79,7 @@ class AccountsWidget(Static):
         )
         yield DataTable(id="accounts-table", cursor_type="row", zebra_stripes=True)
         with Horizontal(id="accounts-footer"):
-            yield Button("Disconnect Selected", variant="error", id="btn-disconnect")
+            yield Button("Kill Account", variant="error", id="btn-disconnect")
 
     def on_mount(self) -> None:
         table = self.query_one("#accounts-table", DataTable)

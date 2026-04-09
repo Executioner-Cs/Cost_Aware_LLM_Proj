@@ -25,16 +25,10 @@ def run_cli(runner: CliRunner, args: list[str]) -> RunResult:
     from cli.main import app
 
     res = runner.invoke(app, args)
-    # Some Click/Typer versions expose .stderr property that raises if stderr
-    # wasn't captured separately.
-    try:
-        stderr = res.stderr or ""
-    except Exception:
-        stderr = ""
     return RunResult(
         exit_code=res.exit_code,
         stdout=(getattr(res, "stdout", None) or getattr(res, "output", "") or ""),
-        stderr=stderr,
+        stderr=(getattr(res, "stderr", None) or ""),
     )
 
 

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from agent.config import load_agent_config
 from agent.dispatcher import dispatch_tool
+from agent.macro_expander import expand_macros, parse_goal_macros
 from agent.sandbox import Sandbox
 from core.llm_turn import agent_chat_turn
 from schemas.tools import AGENT_TOOLS_OPENAI
@@ -46,15 +47,20 @@ def run_agent_loop(
     root = Path(acfg["sandbox_root"]).expanduser().resolve()
     sb = Sandbox(root=root, max_file_bytes=acfg["max_file_bytes"])
 
+    parsed, stripped_goal = parse_goal_macros(goal)
     sys_text = _system_prompt(root, iterations)
+    if parsed is not None:
+        extra = expand_macros(parsed)
+        if extra:
+            sys_text += "\n\n" + extra
     if use_plan:
         from agent.planner import plan_preamble
 
-        sys_text += "\n\n" + plan_preamble(session, goal, use_llm=plan_llm)
+        sys_text += "\n\n" + plan_preamble(session, stripped_goal, use_llm=plan_llm)
 
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": sys_text},
-        {"role": "user", "content": goal},
+        {"role": "user", "content": stripped_goal},
     ]
 
     for _ in range(iterations):

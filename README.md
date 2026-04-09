@@ -137,6 +137,19 @@ Sandboxed tool-using agent. Each **turn** picks the cheapest **tool-capable** mo
 
 Configure limits and sandbox root under `[agent]` in `config.toml` (see below). **Shell commands are disabled by default** (`allow_shell = false`). Set `allow_shell = true` only in trusted environments.
 
+### Macros (token-saving goal prefix)
+
+For repeated workflows, you can prefix the agent goal with a compact inline macro block. This block is expanded **locally** into additional system-prompt constraints (no model tokens spent) and removed from the actual goal.
+
+Examples:
+
+```text
+{BRPR,VENV,NOFAKE,DOCSYNC} Implement feature X
+{CX:2K,TOOLSUM:1K,NOFAKE} Fix failing tests with minimal context
+```
+
+See `skills/macro-hand-sign-dsl/SKILL.md` for the full macro table and guidance.
+
 ### `orchestrator route <prompt> [flags]`
 
 | Flag | Description |
@@ -284,6 +297,15 @@ network_disabled = true   # documented intent; not full OS network isolation
 pip install -e ".[dev]"
 pytest
 ```
+
+## Skills
+
+We ship detailed project skills under `skills/` to keep workflows consistent and token-efficient.
+Start with:
+- `skills/token-efficiency-protocol/SKILL.md`
+- `skills/macro-hand-sign-dsl/SKILL.md`
+- `skills/cache-safety-playbook/SKILL.md`
+- `skills/strict-workflow/SKILL.md`
 
 Tests cover:
 - Task classifier (`test_classifier.py`) — 14 parameterised cases

@@ -8,6 +8,11 @@ from rich.table import Table
 console = Console()
 
 
+def _supports_unicode() -> bool:
+    enc = (console.encoding or "").lower()
+    return bool(enc) and "utf" in enc
+
+
 def print_panel(title: str, body: str, style: str = "cyan") -> None:
     console.print(Panel(body, title=title, border_style=style))
 
@@ -17,8 +22,10 @@ def print_error(msg: str) -> None:
 
 
 def print_success(msg: str) -> None:
-    console.print(f"[bold green]✓[/bold green] {msg}")
+    mark = "✓" if _supports_unicode() else "+"
+    console.print(f"[bold green]{mark}[/bold green] {msg}")
 
 
 def print_warning(msg: str) -> None:
-    console.print(f"[bold yellow]⚠[/bold yellow] {msg}")
+    mark = "⚠" if _supports_unicode() else "!"
+    console.print(f"[bold yellow]{mark}[/bold yellow] {msg}")

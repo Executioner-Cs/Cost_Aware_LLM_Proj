@@ -27,15 +27,19 @@ def cmd_connect(
             load_dotenv_once()
             key = (get_provider_api_key(provider) or "").strip()
         if not key:
-            key = typer.prompt("API key (PAT)", hide_input=True).strip()
+            key = typer.prompt(
+                f"{provider} API key",
+                hide_input=True,
+            ).strip()
         if not key:
-            raise ValueError("API key is required (pass --api-key or set it in .env/environment variables).")
+            raise ValueError(
+                "API key is required. Pass --api-key, set it in .env, or enter it at the prompt."
+            )
 
-        with console.status(f"[cyan]Connecting to {provider}…"):
+        with console.status(f"[cyan]Connecting to {provider}..."):
             session = get_session()
             account = svc_connect(session, provider, key)
 
-            # Avoid DetachedInstanceError after session close/commit expiry.
             account_id = account.id
             display_name = account.display_name
     except ValueError as exc:
@@ -50,5 +54,5 @@ def cmd_connect(
 
     print_success(
         f"Connected [bold]{provider}[/bold] account "
-        f"[dim]{display_name or ''}[/dim] (id: {account_id[:8]}…)"
+        f"[dim]{display_name or ''}[/dim] (id: {account_id[:8]}...)"
     )

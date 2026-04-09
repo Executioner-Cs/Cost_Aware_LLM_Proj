@@ -9,9 +9,15 @@ import tomllib
 from pathlib import Path
 
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.prompt import Prompt
 
-from db.session import create_all_tables, get_session
-from utils.console import console, print_success
+from db.session import get_session
+from db.session import create_all_tables
+from services.connect_service import connect as svc_connect
+from utils.console import console, print_error, print_success, print_warning
+from utils.env import get_provider_api_key, load_dotenv_once
+from utils.setup_interactive import get_interactive_status, pick_provider
+from utils.setup_ui import render_init_banner, render_init_handoff_panel, render_init_success_panel
 
 
 DEFAULT_CONFIG = """\
@@ -60,6 +66,7 @@ def run_init(home: Path | None = None) -> None:
     if home is None:
         home = get_home()
 
+    render_init_banner()
     home.mkdir(parents=True, exist_ok=True)
 
     with Progress(SpinnerColumn(), TextColumn("{task.description}"), transient=True) as progress:
@@ -89,9 +96,120 @@ def run_init(home: Path | None = None) -> None:
         progress.update(t, completed=True)
 
     print_success(f"Orchestrator initialised at [bold]{home}[/bold]")
-    console.print(f"  Config  : {home / 'config.toml'}")
-    console.print(f"  Database: {home / 'orchestrator.db'}")
-    console.print(f"  Vectors : {home / 'qdrant'}")
+    render_init_success_panel(home)
+    _run_post_init_connect_handoff()
+
+
+def _run_post_init_connect_handoff() -> None:
+    status = get_interactive_status(console)
+    if not status.can_prompt:
+        _print_fallback_connect_commands(status.message)
+        return
+
+    render_init_handoff_panel()
+    load_dotenv_once()
+    connected: list[str] = []
+
+    while True:
+        provider = pick_provider(console)
+        if not provider:
+            if not connected:
+                _print_fallback_connect_commands("No provider selected.")
+            else:
+                console.print(
+                    f"[bold bright_cyan]Connected providers:[/bold bright_cyan] "
+                    + ", ".join(connected)
+                )
+                console.print("[dim]Launching interactive shell…[/dim]")
+            return
+
+        env_key = (get_provider_api_key(provider) or "").strip()
+
+        if env_key:
+            account_id, display_name = _try_connect(provider, env_key)
+            if account_id:
+                _print_connect_success(provider, account_id, display_name)
+                connected.append(provider)
+                continue
+            print_warning(f"Saved {provider} key failed. Enter a valid key to retry.")
+            if _prompt_loop_until_connected(provider, connected):
+                continue
+            # user submitted empty — let them pick again or skip
+            continue
+
+        key = _prompt_api_key(provider)
+        if not key:
+            # user hit Enter with no key — go back to picker
+            print_warning("No key entered — returning to provider picker.")
+            continue
+        account_id, display_name = _try_connect(provider, key)
+        if account_id:
+            _print_connect_success(provider, account_id, display_name)
+            connected.append(provider)
+            continue
+        print_warning("Connect failed. Enter a valid key to retry, or submit empty to return to picker.")
+        if _prompt_loop_until_connected(provider, connected):
+            continue
+
+
+def _prompt_api_key(provider: str) -> str:
+    try:
+        return Prompt.ask(f"Enter {provider} API key", password=False, default="").strip()
+    except (KeyboardInterrupt, EOFError):
+        return ""
+
+
+def _prompt_loop_until_connected(provider: str, connected: list[str] | None = None) -> bool:
+    """
+    Visible-input retry loop: keep asking for key until success or empty input.
+    Appends provider to `connected` on success.
+    """
+    while True:
+        key = _prompt_api_key(provider)
+        if not key:
+            return False
+        account_id, display_name = _try_connect(provider, key)
+        if account_id:
+            _print_connect_success(provider, account_id, display_name)
+            if connected is not None:
+                connected.append(provider)
+            return True
+        print_warning("Invalid key. Try again or submit empty input to return to picker.")
+
+
+def _try_connect(provider: str, key: str) -> tuple[str, str]:
+    """Attempt a single connect call. Returns (account_id, display_name) or ("", "")."""
+    session = None
+    try:
+        with console.status(f"[cyan]Connecting to {provider}..."):
+            session = get_session()
+            account = svc_connect(session, provider, key)
+            return account.id, account.display_name or ""
+    except ValueError as exc:
+        print_error(str(exc))
+        return "", ""
+    except Exception as exc:
+        print_error(f"Unexpected error: {exc}")
+        return "", ""
+    finally:
+        if session is not None:
+            session.close()
+
+
+def _print_connect_success(provider: str, account_id: str, display_name: str) -> None:
+    print_success(
+        f"Connected [bold]{provider}[/bold] account "
+        f"[dim]{display_name or ''}[/dim] (id: {account_id[:8]}...)"
+    )
+
+
+def _print_fallback_connect_commands(reason: str) -> None:
+    print_warning(reason)
+    console.print("[bold bright_cyan]Manual next steps:[/bold bright_cyan]")
+    for provider in ("openai", "anthropic", "gemini", "groq"):
+        console.print(f"[cyan]- orchestrator connect {provider}[/cyan]")
+    console.print("[cyan]- orchestrator model list[/cyan]")
+    console.print('[cyan]- orchestrator route "Summarize this text"[/cyan]')
 
 
 def _ensure_qdrant_collection(qdrant_path: Path) -> None:

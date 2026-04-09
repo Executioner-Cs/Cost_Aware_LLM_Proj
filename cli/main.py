@@ -74,6 +74,8 @@ def cmd_init():
     """Initialise orchestrator home directory, database, and vector store."""
     from services.init_service import run_init
     run_init()
+    if _is_interactive_tty():
+        _launch_tui()
 
 
 @app.command("shell")

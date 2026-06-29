@@ -15,7 +15,7 @@ from cli.commands import connect, accounts, model, route, trace, cache, agent, b
 
 app = typer.Typer(
     name="orchestrator",
-    help="Cost-aware LLM orchestration with semantic caching.",
+    help="Local-first CLI to benchmark and route prompts across local and cloud LLMs.",
     no_args_is_help=False,    # changed: False so we can intercept no-arg invocations
     add_completion=False,
 )
@@ -131,7 +131,7 @@ app.command("route",   help="Route a prompt to the cheapest model.")(route.cmd_r
 app.add_typer(accounts.app, name="accounts", help="Manage connected accounts.",    no_args_is_help=True)
 app.add_typer(model.app,    name="model",    help="Browse the model registry.",    no_args_is_help=True)
 app.add_typer(trace.app,    name="trace",    help="Inspect routing traces.",        no_args_is_help=True)
-app.add_typer(cache.app,    name="cache",    help="Manage the semantic cache.",     no_args_is_help=True)
+app.add_typer(cache.app,    name="cache",    help="Manage the exact-match response cache.", no_args_is_help=True)
 app.add_typer(agent.app,    name="agent",    help="Tool-using agent (multi-provider).", no_args_is_help=True)
 app.add_typer(benchmark.app, name="benchmark", help="Benchmark models on your own task sets.", no_args_is_help=True)
 

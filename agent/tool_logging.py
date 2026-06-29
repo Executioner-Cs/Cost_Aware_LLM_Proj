@@ -15,10 +15,20 @@ from db.repositories.tool_calls import create as create_tool_call
 
 _REDACTED = "***REDACTED***"
 # Keys whose values are secret regardless of content.
-_SECRET_KEY_RE = re.compile(r"(api[_-]?key|token|secret|password|credential|key_file)", re.IGNORECASE)
+_SECRET_KEY_RE = re.compile(r"(api[_-]?key|token|secret|password|passwd|credential|key_file|private[_-]?key|auth)", re.IGNORECASE)
 # Provider key shapes that may appear inside free-form strings (e.g. a shell command).
 _SECRET_VALUE_RE = re.compile(
-    r"(sk-ant-[A-Za-z0-9_-]{6,}|sk-[A-Za-z0-9_-]{6,}|gsk_[A-Za-z0-9]{6,}|AIza[A-Za-z0-9_-]{10,})"
+    r"("
+    r"sk-ant-[A-Za-z0-9_-]{6,}"          # Anthropic
+    r"|sk-proj-[A-Za-z0-9_-]{6,}"        # OpenAI project keys
+    r"|sk-[A-Za-z0-9_-]{6,}"             # OpenAI / generic
+    r"|gsk_[A-Za-z0-9]{6,}"              # Groq
+    r"|AIza[A-Za-z0-9_-]{10,}"           # Google
+    r"|xox[baprs]-[A-Za-z0-9-]{6,}"      # Slack
+    r"|ghp_[A-Za-z0-9]{20,}"             # GitHub PAT
+    r"|gho_[A-Za-z0-9]{20,}"             # GitHub OAuth
+    r"|-----BEGIN[A-Z ]+PRIVATE KEY-----"  # PEM private key blocks
+    r")"
 )
 # NAME=value / NAME: value where NAME looks key-like (e.g. OPENAI_API_KEY=...).
 _ASSIGN_RE = re.compile(

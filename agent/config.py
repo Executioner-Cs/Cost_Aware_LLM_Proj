@@ -6,9 +6,19 @@ from pathlib import Path
 from services.init_service import get_home, load_config
 
 
+# Case-insensitive substrings refused in run_shell commands. Destructive ops plus
+# curl/wget (advisory network defense, since network_disabled is not enforced).
+# Users can override the whole list via [agent].blocked_shell_patterns in config.
+_DEFAULT_BLOCKED_SHELL_PATTERNS = [
+    "rm -rf", "mkfs", "dd if=", ":(){:|:&};:",
+    "chmod -R", "chown -R", "sudo ", "shutdown", "reboot", "> /dev/",
+    "curl ", "wget ",
+]
+
+
 def _parse_blocked_patterns(raw: str | None) -> list[str]:
     if not raw:
-        return ["rm -rf", "mkfs", "dd if=", ":(){:|:&};:"]
+        return list(_DEFAULT_BLOCKED_SHELL_PATTERNS)
     return [p.strip() for p in str(raw).split(",") if p.strip()]
 
 

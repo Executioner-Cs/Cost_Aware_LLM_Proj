@@ -142,6 +142,61 @@ def test_sandbox_denies_sensitive_paths():
         assert sb.resolve_path("notes.txt").name == "notes.txt"
 
 
+def test_sandbox_denies_more_credential_paths():
+    # Expanded denylist: credential dirs, private keys, keystores.
+    with tempfile.TemporaryDirectory() as d:
+        sb = Sandbox(root=Path(d))
+        for bad in (
+            ".ssh/known_hosts", "id_rsa", "id_ed25519", ".aws/credentials",
+            ".gnupg/secring.gpg", ".kube/config", ".docker/config.json",
+            "server.pfx", "store.keystore", ".git-credentials", ".npmrc",
+        ):
+            with pytest.raises(ValueError):
+                sb.resolve_path(bad)
+        # A normal source file is still allowed.
+        assert sb.resolve_path("src/main.py").name == "main.py"
+
+
+def test_sandbox_symlink_target_outside_root_rejected(tmp_path):
+    # A symlink inside the sandbox pointing outside must be rejected (resolve()
+    # follows it, then confinement fails). Skip where symlinks need privileges.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("x")
+    root = tmp_path / "root"
+    root.mkdir()
+    link = root / "escape"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted on this platform")
+    sb = Sandbox(root=root)
+    with pytest.raises(ValueError):
+        sb.resolve_path("escape/secret.txt")
+
+
+def test_default_blocked_shell_patterns_expanded():
+    from agent.config import _parse_blocked_patterns
+    defaults = _parse_blocked_patterns(None)
+    for pat in ("rm -rf", "sudo ", "curl ", "wget ", "chmod -R", "> /dev/"):
+        assert pat in defaults
+    # A user-supplied list still fully overrides the defaults.
+    assert _parse_blocked_patterns("foo, bar") == ["foo", "bar"]
+
+
+def test_redact_more_key_shapes():
+    blob = json.dumps(redact({
+        "log": "ghp_0123456789abcdefghij0123456789abcd used; xoxb-123456-abcdef pushed",
+        "openai": "sk-proj-abcdef123456 here",
+        "pem": "-----BEGIN RSA PRIVATE KEY-----",
+    }))
+    assert "ghp_0123456789abcdefghij" not in blob
+    assert "xoxb-123456-abcdef" not in blob
+    assert "sk-proj-abcdef123456" not in blob
+    assert "BEGIN RSA PRIVATE KEY" not in blob
+    assert "***REDACTED***" in blob
+
+
 # --------------------------------------------------------------------------- #
 # 7. write_file overwrite safety
 # --------------------------------------------------------------------------- #

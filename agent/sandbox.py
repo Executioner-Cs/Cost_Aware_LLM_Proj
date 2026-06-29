@@ -7,9 +7,15 @@ from pathlib import Path
 
 # Credential and key/DB material the agent must never read, write, list into, or
 # search, even when it sits inside the sandbox root.
-_DENIED_NAMES = {".env", ".netrc", "orchestrator.db", "orchestrator.db-wal", "orchestrator.db-shm"}
-_DENIED_SUFFIXES = {".key", ".pem"}
-_DENIED_DIR_PARTS = {".orchestrator"}
+_DENIED_NAMES = {
+    ".env", ".netrc", "orchestrator.db", "orchestrator.db-wal", "orchestrator.db-shm",
+    # Common credential / private-key filenames.
+    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".git-credentials", ".pgpass",
+    ".npmrc", ".pypirc", ".htpasswd", "credentials",
+}
+_DENIED_SUFFIXES = {".key", ".pem", ".pfx", ".p12", ".keystore", ".jks"}
+# Any path component matching one of these is denied (credential directories).
+_DENIED_DIR_PARTS = {".orchestrator", ".ssh", ".aws", ".gnupg", ".kube", ".docker", ".gcloud", ".azure"}
 
 
 def is_sensitive_path(path: Path) -> bool:
@@ -38,6 +44,9 @@ class Sandbox:
 
     def resolve_path(self, path_str: str) -> Path:
         raw = Path(path_str)
+        # .resolve() collapses ".." and follows symlinks, so the confinement check
+        # below runs against the real target: a symlink inside the sandbox that
+        # points outside is rejected, and ".." traversal cannot escape the root.
         if raw.is_absolute():
             candidate = raw.resolve()
         else:

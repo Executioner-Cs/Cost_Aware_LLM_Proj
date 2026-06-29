@@ -10,7 +10,7 @@
 * Product identity: a local-first AI routing and benchmarking workbench for developers. See the "Product identity (V2)" section below. It is NOT a cheap-model router, a generic AI gateway, or a coding agent. The cheapest-capable-model routing that exists today is one capability, not the product.
 * Today it routes prompts across multiple LLM providers (Anthropic, OpenAI, Groq, Gemini) based on cost and capability, picking the cheapest model that satisfies the task's tier and capability constraints.
 * Caching: the only implemented cache is an exact-match SQLite cache (`core/cache.py`, `ExactCache`) that pulls no embedding or vector dependencies. The legacy heavy semantic cache was removed; a lighter `semantic-cache-v2` is future work and stays opt-in. See "Cache invariants".
-* It has an optional, experimental tool-using ReAct agent runtime with path-confined file I/O, search, Python, pytest, and optional shell. Do not promote agent mode until the P0 agent-safety branch lands.
+* It has an optional, experimental tool-using ReAct agent runtime with path-confined file I/O, search, Python, pytest, and optional shell. P0 safety hardening has landed (subprocess env scrubbing, run_python/run_shell gated and not exposed unless enabled, tool-log redaction, sensitive-path denylist, write-overwrite protection). Agent mode remains experimental; do not promote it as production-safe.
 * It is local-first and single-user unless the user states otherwise. Encryption key, database, and any vector store all live under `~/.orchestrator/`.
 
 ## Important paths
@@ -284,7 +284,7 @@ Skipping the gate is allowed only for trivial, comment-only, or single-line docs
 * Core router: `core/router.py` runs normalize, classify, build cache, lookup, estimate tokens, select cheapest-capable model, call provider, validate, store, write trace.
 * Cache: exact-match SQLite cache only (see "Cache invariants"). `core/cache.py` is the backend selector (`ExactCache` or `NoOpCache`). The legacy semantic cache and the `embeddings/` package were removed.
 * DB: SQLite via SQLAlchemy. Tables today are `connected_accounts`, `model_registry`, `traces`, `exact_cache`, `tool_calls`, and `cache_entries` (legacy semantic table, retained to preserve schema and old data; no longer written). No migrations. No vector store.
-* Agent runtime: experimental ReAct loop in `agent/` with path-confined file I/O and optional shell (default off). `network_disabled` is config-only and not enforced in source.
+* Agent runtime: experimental ReAct loop in `agent/`, P0-hardened (subprocess env scrubbing, run_python/run_shell gated and not exposed unless enabled, tool-log redaction, sensitive-path denylist, write-overwrite protection). `allow_python` and `allow_shell` default off. `network_disabled` is advisory only, not enforced in source.
 * Tests: `pytest` with `pytest-asyncio` and `pytest-mock`, plus `tests/tests_e2e_cli_simulation/`. No lint, format, or typecheck command exists.
 
 ## Strategic direction (future concepts)
@@ -305,7 +305,7 @@ These are the target domain concepts. None are implemented as DB models yet. Do 
 * Do not chase provider count. Breadth of providers is not the moat.
 * Do not make manual API keys the product identity. Sources and scorecards are the identity.
 * Do not reintroduce the heavy semantic cache (sentence-transformers + Qdrant). The exact cache is the only implemented cache; a lighter semantic-cache-v2 is future work and must stay opt-in, never the default.
-* Do not promote agent mode until the P0 agent-safety branch lands.
+* Do not promote agent mode as production-safe. P0 hardening has landed, but agent mode stays experimental until the `agent/safe-agent-mode` branch.
 * Do not invent implemented features in docs, help text, or the TUI. Mark planned work as planned.
 * Do not make heavy dependencies (`torch`, `sentence-transformers`, `qdrant-client`) required for base routing. Keep the default route path slim.
 * Keep the local-first posture. No required hosted services, no telemetry by default.

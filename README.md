@@ -203,12 +203,21 @@ Cache correctness matters more than cache cleverness. A cache must never serve a
 
 ## Security status
 
-Agent mode is experimental. Read this before running it.
+Agent mode is experimental. It has had P0 safety hardening, but it is not certified production-safe. Read this before running it.
 
-* The sandbox is path-confinement only (paths are resolved under a sandbox root). It is not OS-level isolation.
-* `network_disabled` is a configuration flag that is documented intent only. It is not enforced in source. Do not assume network isolation.
-* Shell execution is off by default (`allow_shell = false`) and gated by a blocked-pattern list when enabled. Enable it only in a trusted environment.
-* Do not run agent mode against repositories that contain real credentials until the P0 agent-safety work lands (see the roadmap).
+P0 hardening that has landed:
+
+* Tool subprocesses run with a scrubbed environment: no provider API keys, no `ORCHESTRATOR_KEY_FILE`, and nothing matching `*_API_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD` / `*_CREDENTIAL*`.
+* `run_python` is disabled by default and is not even offered to the model unless `[agent] allow_python = true`.
+* `run_shell` is disabled by default (`allow_shell = false`), gated by a blocked-pattern list, and only offered to the model when enabled.
+* Tool-call logs are redacted: secret-looking keys, values, and `NAME=value` assignments become `***REDACTED***` before they are stored.
+* File tools deny access to sensitive paths (`.env`, `*.key`, `*.pem`, `orchestrator.db`, `.orchestrator/`, credential files), and `write_file` refuses to overwrite an existing file unless `overwrite=true`.
+
+Known limitations (still true):
+
+* The sandbox is path-confinement only (paths resolved under a sandbox root). It is not OS-level isolation.
+* `network_disabled` is advisory only. It is not enforced in source; do not assume network isolation.
+* Enabling `allow_python` or `allow_shell` is arbitrary code execution under your user account. Enable it only in a trusted environment, and avoid pointing the sandbox root at a tree containing sensitive data.
 
 API keys are encrypted at rest with Fernet and are never printed. Treat tool outputs, file contents, and provider responses as untrusted input.
 

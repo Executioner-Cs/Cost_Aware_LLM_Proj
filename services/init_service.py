@@ -50,10 +50,14 @@ sandbox_root = "."
 max_iterations = 8
 max_file_bytes = 1048576
 max_subprocess_seconds = 120
+# run_python and run_shell are arbitrary code execution. Both are disabled by
+# default and are not even offered to the model unless enabled here.
+allow_python = false
 allow_shell = false
 # Comma-separated substrings; shell commands containing any are rejected.
 blocked_shell_patterns = "rm -rf,mkfs,dd if=,:(){:|:&};:"
-# Documentary: true OS-level network isolation is not enforced; keep false for local dev caution.
+# Advisory only: true OS-level network isolation is NOT enforced for tool
+# subprocesses. Do not treat this as a security boundary.
 network_disabled = true
 """
 

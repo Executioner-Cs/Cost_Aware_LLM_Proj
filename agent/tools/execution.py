@@ -1,6 +1,7 @@
 """Run Python, shell (optional), or pytest inside sandbox with timeouts."""
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,15 +13,47 @@ from agent.sandbox import Sandbox
 from agent.tool_logging import run_logged
 
 
+# Allowlist of environment variables forwarded to agent subprocesses. An
+# allowlist (not a denylist) guarantees no provider key, token, or credential
+# can leak in, regardless of what the parent process environment contains.
+_SAFE_ENV_KEYS = (
+    "PATH", "PATHEXT", "SYSTEMROOT", "SystemRoot", "WINDIR", "windir",
+    "TEMP", "TMP", "TMPDIR", "COMSPEC", "NUMBER_OF_PROCESSORS",
+    "PYTHONPATH", "PYTHONIOENCODING", "PYTHONHOME",
+    "LANG", "LC_ALL", "LC_CTYPE",
+)
+
+
+def _safe_subprocess_env() -> dict[str, str]:
+    """Minimal, secret-free environment for agent subprocesses.
+
+    Only safe basics are forwarded. Provider API keys, ORCHESTRATOR_KEY_FILE,
+    and anything matching *_API_KEY / *_TOKEN / *_SECRET / *_PASSWORD /
+    *_CREDENTIAL* cannot reach a tool subprocess: they are not on the allowlist.
+    """
+    env = {k: os.environ[k] for k in _SAFE_ENV_KEYS if k in os.environ}
+    if "PATH" not in env:
+        env["PATH"] = os.defpath
+    return env
+
+
 def run_python(
     sandbox: Sandbox,
     code: str,
     *,
+    enabled: bool = False,
     timeout_sec: float = 30.0,
     session: Session | None = None,
     trace_id: Optional[str] = None,
 ) -> dict[str, Any]:
     def _do() -> dict[str, Any]:
+        if not enabled:
+            return {
+                "ok": False,
+                "error": "run_python is disabled. Enable it in agent config ([agent] allow_python = true) to run Python in the sandbox.",
+                "stdout": "",
+                "stderr": "",
+            }
         try:
             proc = subprocess.run(
                 [sys.executable, "-c", code],
@@ -28,6 +61,7 @@ def run_python(
                 text=True,
                 timeout=timeout_sec,
                 cwd=str(sandbox.root),
+                env=_safe_subprocess_env(),
             )
             return {
                 "ok": proc.returncode == 0,
@@ -88,6 +122,7 @@ def run_shell(
                 text=True,
                 timeout=timeout_sec,
                 cwd=str(sandbox.root),
+                env=_safe_subprocess_env(),
             )
             return {
                 "ok": proc.returncode == 0,
@@ -126,6 +161,7 @@ def run_tests(
                 text=True,
                 timeout=timeout_sec,
                 cwd=str(sandbox.root),
+                env=_safe_subprocess_env(),
             )
             return {
                 "ok": proc.returncode == 0,

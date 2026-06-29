@@ -12,7 +12,7 @@ from agent.dispatcher import dispatch_tool
 from agent.macro_expander import expand_macros, parse_goal_macros
 from agent.sandbox import Sandbox
 from core.llm_turn import agent_chat_turn
-from schemas.tools import AGENT_TOOLS_OPENAI
+from schemas.tools import agent_tools
 
 
 def _system_prompt(sandbox_root: Path, max_iterations: int) -> str:
@@ -63,11 +63,17 @@ def run_agent_loop(
         {"role": "user", "content": stripped_goal},
     ]
 
+    # Code-execution tools are offered to the model only when explicitly enabled.
+    tools = agent_tools(
+        allow_python=acfg.get("allow_python", False),
+        allow_shell=acfg["allow_shell"],
+    )
+
     for _ in range(iterations):
         turn = agent_chat_turn(
             session,
             messages,
-            AGENT_TOOLS_OPENAI,
+            tools,
             quality=quality,
         )
         if not turn.tool_calls:
@@ -95,6 +101,7 @@ def run_agent_loop(
                 sandbox=sb,
                 session=session,
                 allow_shell=acfg["allow_shell"],
+                allow_python=acfg.get("allow_python", False),
                 subprocess_timeout_sec=acfg["max_subprocess_seconds"],
                 blocked_shell_patterns=acfg["blocked_shell_patterns"],
             )

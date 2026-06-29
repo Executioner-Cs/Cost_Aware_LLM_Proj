@@ -46,6 +46,7 @@ def write_file(
     path: str,
     content: str,
     *,
+    overwrite: bool = False,
     session: Session | None = None,
     trace_id: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -54,6 +55,14 @@ def write_file(
             if len(content.encode("utf-8")) > sandbox.max_file_bytes:
                 return {"ok": False, "path": path, "error": "content exceeds max_file_bytes"}
             p = sandbox.resolve_path(path)
+            # In agent mode, refuse to clobber an existing file unless the caller
+            # explicitly opts in. New files write freely.
+            if p.exists() and not overwrite:
+                return {
+                    "ok": False,
+                    "path": str(p),
+                    "error": "file exists; refusing to overwrite (pass overwrite=true to replace it)",
+                }
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
             return {"ok": True, "path": str(p), "bytes_written": len(content.encode("utf-8"))}
@@ -65,7 +74,7 @@ def write_file(
         _do,
         session=session,
         trace_id=trace_id,
-        log_args={"path": path, "content_len": len(content)},
+        log_args={"path": path, "content_len": len(content), "overwrite": overwrite},
     )
 
 

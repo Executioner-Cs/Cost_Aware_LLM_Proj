@@ -18,6 +18,7 @@ def dispatch_tool(
     session: Session | None = None,
     trace_id: Optional[str] = None,
     allow_shell: bool = False,
+    allow_python: bool = False,
     subprocess_timeout_sec: float = 60.0,
     blocked_shell_patterns: Optional[list[str]] = None,
 ) -> dict[str, Any]:
@@ -35,6 +36,7 @@ def dispatch_tool(
             sandbox,
             str(args.get("path", "")),
             str(args.get("content", "")),
+            overwrite=bool(args.get("overwrite", False)),
             session=session,
             trace_id=trace_id,
         )
@@ -52,6 +54,7 @@ def dispatch_tool(
         return execution.run_python(
             sandbox,
             str(args.get("code", "")),
+            enabled=allow_python,
             timeout_sec=min(subprocess_timeout_sec, 120.0),
             session=session,
             trace_id=trace_id,

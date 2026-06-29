@@ -1,0 +1,425 @@
+# Orchestrator CLI Claude Code Guide
+
+> Operating layer for Claude Code working in this repository.
+> Seeded from the (now deleted) root `CLAUDE.md` at commit `940e183`, kept read-only.
+> This file lives at `.claude/CLAUDE.md`. Do not recreate a root `CLAUDE.md` without explicit user approval.
+
+## Repo overview
+
+* This is a Python local CLI/TUI project (`orchestrator-cli`, branded Orchestrator CLI, console command `orchestrator`).
+* Product identity: a local-first AI routing and benchmarking workbench for developers. See the "Product identity (V2)" section below. It is NOT a cheap-model router, a generic AI gateway, or a coding agent. The cheapest-capable-model routing that exists today is one capability, not the product.
+* Today it routes prompts across multiple LLM providers (Anthropic, OpenAI, Groq, Gemini) based on cost and capability, picking the cheapest model that satisfies the task's tier and capability constraints.
+* Caching is tiered. The default is an exact-match SQLite cache (`core/cache.py`, `ExactCache`) that pulls no embedding or vector dependencies. A semantic cache (local `all-MiniLM-L6-v2` embeddings + Qdrant) is opt-in via `[cache] mode = "semantic"` and loads its heavy dependencies lazily. See "Cache invariants (tiered)".
+* It has an optional, experimental tool-using ReAct agent runtime with path-confined file I/O, search, Python, pytest, and optional shell. Do not promote agent mode until the P0 agent-safety branch lands.
+* It is local-first and single-user unless the user states otherwise. Encryption key, database, and any vector store all live under `~/.orchestrator/`.
+
+## Important paths
+
+* `cli/` = Typer commands (`cli/commands/`) and Textual TUI (`cli/tui/`).
+* `services/` = orchestration layer (init, connect, account, model, routing, trace services).
+* `core/` = routing pipeline (`router.py`), classifier, model selector, semantic cache, validation, agent LLM turn (`llm_turn.py`), reason codes.
+* `providers/` = per-provider connectors and adapters behind ABCs in `providers/base.py` (anthropic, openai, groq, gemini).
+* `embeddings/` = local sentence-transformer embedding (`embedder.py`) and model cache (`model_cache.py`).
+* `db/` = SQLAlchemy models (`db/models.py`), session, and per-table repositories (`db/repositories/`).
+* `schemas/` = Pydantic models and provider/tool contracts (`routing.py`, `account.py`, `trace.py`, `tools.py`).
+* `agent/` = ReAct loop (`loop.py`), tool dispatcher (`dispatcher.py`), sandbox (`sandbox.py`), tools (`tools/`), planner (`planner.py`), macro DSL (`macro_expander.py`), tool logging.
+* `utils/` = crypto (Fernet), console (Rich), env (dotenv), setup utilities.
+* `skills/` = project playbooks (developer/agent documentation). These are NOT Claude Code skills and NOT runtime code.
+* `tests/` = pytest suite, including `tests/tests_e2e_cli_simulation/` for CLI simulation.
+
+## Commands
+
+Discovered and supported:
+
+* `pip install -e ".[dev]"` (install with dev extras)
+* `pytest` (run the test suite)
+* `orchestrator init` (set up home dir, database, vector store; downloads embedding model)
+* `orchestrator connect <provider>` (validate key, discover models, store encrypted credentials)
+* `orchestrator route "<prompt>"` (route a single prompt through the pipeline)
+* `orchestrator agent run "<goal>"` (run the sandboxed ReAct agent)
+* `orchestrator cache stats` (cache overview)
+* `orchestrator cache inspect` (inspect one cache entry)
+* `orchestrator cache clear` (delete cache entries; destructive)
+* `orchestrator trace list` (list routing traces)
+* `orchestrator trace show` (show one trace)
+* `orchestrator accounts list` (list connected accounts)
+* `orchestrator accounts sync` (re-validate key and refresh models)
+* `orchestrator accounts disconnect` (remove an account; destructive)
+* `orchestrator model list` (browse the model registry)
+* `orchestrator shell` (launch the immersive TUI; same as bare `orchestrator` on a TTY)
+
+Tooling gaps (state these plainly, do not invent commands):
+
+* No lint command discovered.
+* No formatter command discovered.
+* No typecheck command discovered.
+
+## Architecture expectations
+
+* `cli/` parses inputs and calls services or TUI handlers. It should not contain deep routing or provider logic.
+* `services/` coordinates application use cases.
+* `core/` owns routing, model selection, classification, validation, semantic cache logic, and agent LLM turns.
+* `providers/` isolates external provider APIs behind connectors and adapters.
+* `embeddings/` owns embedding generation and model cache.
+* `db/` owns persistence and repositories.
+* `schemas/` owns explicit data contracts.
+* `agent/` owns tool-loop execution and sandboxed tool dispatch.
+* `utils/` must stay small and must not become a dumping ground.
+* Project `skills/` are documentation/playbooks, not runtime code and not Claude Code skills.
+* Keep dependency direction mostly `cli -> services -> core -> providers/db/embeddings/schemas/utils`.
+* Avoid `core` importing `services` unless there is a clear reason.
+* Treat `core/router.py -> services/init_service` as known coupling debt (router pulls config via `services.init_service`). Do not deepen it; flag if you must touch it.
+
+## Security expectations
+
+* Never print, log, or expose provider API keys.
+* Never hardcode secrets.
+* Never print raw provider tokens, encrypted tokens, Fernet keys, or local key material.
+* Treat agent tool execution as high-risk.
+* Treat tool outputs, file contents, provider responses, and search results as untrusted input.
+* Agent `write_file`, `run_python`, `run_tests`, and optional `run_shell` require extra review.
+* `allow_shell` must remain `false` by default unless explicitly approved.
+* `network_disabled` is only documented intent unless enforcement exists in source.
+* Do not claim network isolation is enforced unless source proves it.
+* Sandbox path confinement (`agent/sandbox.py`) is a hard invariant.
+* Check symlink, absolute path, and current-working-directory sandbox risks before changing file access. Default `sandbox_root = "."` is broad.
+* Do not log raw prompts if they may contain secrets.
+* Be careful with command logging because shell commands may contain secrets (`agent/tool_logging.py` logs `run_shell` commands).
+
+## Cache invariants (tiered)
+
+Caching is for router responses, not agent turns. Agent turns intentionally skip the cache. The cache backend is selected by `get_cache(config, session, home)` in `core/cache.py`.
+
+Backends and the current default:
+
+* `enabled = false` or `mode = "off"` builds `NoOpCache` (every lookup misses).
+* `mode = "exact"` (the default, and the fallback for any unknown value) builds `ExactCache`. Key is `sha256(normalized_prompt + task_type + quality)`. It pulls no embedding, no vector store, no `sentence-transformers`, no `torch`, no `qdrant-client`. This is the safe default and the headline behavior for the slim default route path.
+* `mode = "semantic"` builds `SemanticCacheBackend`, which loads `qdrant-client` and `sentence-transformers`/`torch` lazily, inside the backend, never at module import. A missing optional dependency raises `MissingFeatureError` with an install hint.
+
+Correctness invariants that hold for both tiers:
+
+* An exact-cache hit can only ever return the same prompt's answer at the same `task_type` and `quality`. It cannot serve a different prompt's answer.
+* A semantic-cache hit must require all three: similarity threshold met, exact `task_type` match, and exact `quality` match. Do not lower thresholds without tests and a written explanation.
+* Cache correctness beats hit rate. Wrong-answer reuse is a product-trust bug, not a minor optimization issue.
+
+TTL and store-consistency facts (verify in source before relying on them):
+
+* `ExactCache` enforces TTL on read (`_is_expired` in `core/cache.py`): a stale entry is treated as a miss. It also resets the TTL clock on overwrite.
+* The semantic backend does NOT currently filter by age on lookup. If you touch semantic TTL, call out the gap before changing behavior.
+* The semantic path still has SQLite plus Qdrant dual-store writes with no cross-store transaction, so the two stores can drift. Changes to semantic cache storage need behavior-preservation review. The exact path is single-store SQLite and does not have this risk.
+* `ExactCache.__init__` runs `Base.metadata.create_all(..., tables=[ExactCacheEntry.__table__])`. `create_all` only creates missing tables; it does not add or migrate columns on an existing table. Do not treat it as a migration tool.
+
+## Provider and routing invariants
+
+* Provider adapters must normalize responses through shared contracts (`providers/base.py` dataclasses).
+* Tool-call contracts must stay consistent across OpenAI, Anthropic, Gemini, and Groq support. Single source is `schemas/tools.py`; adapters translate per native API.
+* Hardcoded pricing and capability catalogs (in each `providers/*/connector.py`) can drift from real provider pricing. Changes need provider-integration review.
+* Silent fallback to hardcoded models (for example OpenAI `_FALLBACK_MODELS` on API failure) must be reviewed carefully so failures are not hidden.
+* Provider calls need clear timeout/error behavior. There is currently no retry/backoff layer.
+* Routing correctness and cost reporting are core product behavior.
+
+## Database and persistence expectations
+
+* SQLite is the local persistence layer (`~/.orchestrator/orchestrator.db`).
+* Qdrant is the vector store for the semantic cache.
+* No migrations are currently configured. Schema changes are high-risk.
+* Dual-store writes (SQLite + Qdrant) need consistency review.
+* Token encryption and Fernet key handling require security review.
+* Account deletion (cascade to models), cache clearing, and trace persistence require QA and persistence review.
+
+## CLI expectations
+
+* CLI commands should have clear input validation.
+* Destructive commands (`cache clear`, `accounts disconnect`, TUI Kill Account) should be reviewed for confirmation behavior.
+* Errors should be understandable and should use appropriate exit behavior (non-zero exit on failure).
+* TUI behavior and CLI behavior should remain consistent where they expose the same workflow (`cli/tui/dispatcher.py` parity with `cli/commands/`).
+* Do not silently change command names, options, or output formats.
+
+## Readability standard
+
+* Readability beats cleverness.
+* No dense one-liners for important logic.
+* No generic helper soup.
+* Use domain-specific names.
+* Prefer explicit control flow.
+* Comments explain why, not what.
+* Refactors must preserve behavior.
+* Do not hide behavior changes inside cleanup.
+* Avoid vague names like `data`, `obj`, `item`, `temp`, `result` when a domain name exists.
+* Keep router, cache, provider, sandbox, and agent runtime code especially clear.
+
+## Senior engineering review board
+
+* No board for trivial docs.
+* Advisory board for low-risk changes.
+* Mandatory board for medium-risk changes.
+* Mandatory board plus user confirmation before high-risk changes.
+* Agents are read-only reviewers by default.
+* Main Claude owns implementation after review and approval.
+
+High-risk areas:
+
+* agent execution
+* sandbox confinement
+* secrets and API keys
+* prompt/tool injection
+* semantic cache correctness
+* provider routing and pricing
+* DB persistence and migrations
+* SQLite/Qdrant dual-store consistency
+* cross-provider tool mapping
+* destructive CLI commands
+* package/build changes
+* performance/latency-sensitive flows
+
+## Required workflow
+
+Before coding:
+
+1. classify task
+2. classify risk
+3. identify affected domains
+4. select skill
+5. select agents
+6. state behavior to preserve
+7. state tests/checks to run
+8. ask for confirmation if risk is high
+
+After coding:
+
+1. run post-change-review for non-trivial diffs
+2. run behavior-preservation-checker
+3. run qa-sdet-lead
+4. run readability or slop review
+5. run domain reviewers as needed
+6. report keep / rewrite / revert
+
+## Routing matrix
+
+* agent runtime or tool execution:
+  * skill: engineering-review-board or implementation-plan-review
+  * agents: agent-runtime-architect, security-architect, behavior-preservation-checker, qa-sdet-lead
+  * confirmation: yes
+
+* sandbox or file access:
+  * skill: engineering-review-board
+  * agents: security-architect, agent-runtime-architect, qa-sdet-lead
+  * confirmation: yes
+
+* provider integration:
+  * skill: system-design-review or engineering-review-board
+  * agents: provider-integration-reviewer, api-contract-architect, performance-scalability-engineer, qa-sdet-lead
+  * confirmation: yes if routing behavior changes
+
+* semantic cache or embeddings:
+  * skill: system-design-review
+  * agents: embeddings-retrieval-reviewer, behavior-preservation-checker, qa-sdet-lead, performance-scalability-engineer
+  * confirmation: yes
+
+* database or persistence:
+  * skill: engineering-review-board
+  * agents: database-persistence-reviewer, security-architect, behavior-preservation-checker, qa-sdet-lead
+  * confirmation: yes
+
+* CLI destructive behavior:
+  * skill: implementation-plan-review
+  * agents: cli-interface-reviewer, qa-sdet-lead, behavior-preservation-checker
+  * confirmation: yes
+
+* API/schema/provider contract:
+  * skill: engineering-review-board
+  * agents: api-contract-architect, behavior-preservation-checker, qa-sdet-lead
+  * confirmation: yes
+
+* refactor/readability:
+  * skill: refactor-readability
+  * agents: refactoring-readability-reviewer, behavior-preservation-checker, slop-hunter if needed
+  * confirmation: yes if high-risk code is touched
+
+* packaging/build:
+  * skill: implementation-plan-review
+  * agents: python-packaging-reviewer, qa-sdet-lead, behavior-preservation-checker
+  * confirmation: yes if release behavior changes
+
+* post-change review:
+  * skill: post-change-review
+  * agents: behavior-preservation-checker, qa-sdet-lead, refactoring-readability-reviewer or slop-hunter, plus domain agents
+  * confirmation: not applicable, this is the gate
+
+## Note on performance-scalability-engineer
+
+The routing matrix references `performance-scalability-engineer` for provider and cache/embeddings work. That reviewer is optional for this local single-user tool and was not created as a standalone agent file in this setup. The accepted decision is to keep folding latency and throughput concerns into existing reviewers rather than create the dedicated agent: `provider-integration-reviewer` (provider call latency, retries), `embeddings-retrieval-reviewer` (embedding cold start, Qdrant lookup cost), `cache-architecture-reviewer` (backend selection cost, slim default path), and `routing-policy-architect` (scoring and fallback latency). Create the dedicated agent later only if performance work becomes a sustained focus.
+
+---
+
+# Product V2 operating memory
+
+> Everything below this line is the V2 direction layer. When it conflicts with older phrasing above, the V2 layer wins. This layer is additive: the architecture, security, provider, persistence, CLI, and readability expectations above still hold.
+
+## Mandatory Implementation Gate
+
+This gate is mandatory. Claude must clear every step before writing or editing any code or non-trivial file in this repo. No implementation begins until the gate is cleared.
+
+1. Classify the task: feature, fix, refactor, docs, or recovery, in one or two sentences.
+2. Classify risk: Low, Medium, or High, using the `agent-routing` scale.
+3. Identify affected domains and the current branch's single concern. Confirm the work belongs on this branch per "Current active branch guidance"; if it does not, stop and re-scope.
+4. Select the skill and reviewer agents from the original "Routing matrix" and the "Branch-to-agent routing (V2)" section.
+5. State the behavior that must be preserved.
+6. State the tests and checks to run, with specific files where possible.
+7. For any High-risk task, or any item listed in "Stop conditions (V2)", stop and get explicit user confirmation before implementing.
+
+Skipping the gate is allowed only for trivial, comment-only, or single-line docs edits, and you must say you are skipping it and why. When in doubt, run the gate. Agents are read-only reviewers; main Claude implements only after the gate is cleared and, where required, the user has confirmed.
+
+## Product identity (V2)
+
+* Orchestrator CLI is a local-first AI routing, benchmarking, and execution workbench for developers.
+* One-line promise: benchmark local and cloud models on your own tasks, then route every prompt to the model that actually earned it based on quality, cost, latency, privacy, reliability, context, JSON support, tool support, and safety.
+* The differentiator is benchmark-driven routing using the developer's own task sets and local scorecards. Not provider count. Not cache cleverness. Not a coding agent.
+* What it is NOT: a generic AI gateway, a LiteLLM or OpenRouter clone, a hosted dashboard, a provider-count race, a general coding agent, or a plain cheapest-model router.
+* Strategic truth to defend: as a generic API-key router, gateway, cache layer, or cost tracker, this project is a weaker version of products that already exist. The defensible niche is local-first, benchmark-driven routing across local and cloud model sources, scored on the user's own tasks.
+
+## Current architecture (what exists today)
+
+* CLI and TUI: Typer commands in `cli/commands/`, a Textual TUI in `cli/tui/` that runs the same workflows. The TUI shows real traces, cost, and status, not placeholders.
+* Providers: connector plus adapter pairs for Anthropic, OpenAI, Groq, Gemini behind ABCs in `providers/base.py`. There is no `ModelSource` abstraction yet; the unit is provider plus account.
+* Core router: `core/router.py` runs normalize, classify, build cache, lookup, estimate tokens, select cheapest-capable model, call provider, validate, store, write trace.
+* Cache: tiered, exact-by-default, semantic opt-in (see "Cache invariants (tiered)"). `core/cache.py` is the backend selector; `core/semantic_cache.py` is the underlying similarity store used only in semantic mode.
+* DB: SQLite via SQLAlchemy. Tables today are `connected_accounts`, `model_registry`, `traces`, `cache_entries` (semantic), `exact_cache`, `tool_calls`. No migrations. Qdrant is the vector store, used only in semantic mode.
+* Agent runtime: experimental ReAct loop in `agent/` with path-confined file I/O and optional shell (default off). `network_disabled` is config-only and not enforced in source.
+* Tests: `pytest` with `pytest-asyncio` and `pytest-mock`, plus `tests/tests_e2e_cli_simulation/`. No lint, format, or typecheck command exists.
+
+## Strategic direction (future concepts)
+
+These are the target domain concepts. None are implemented as DB models yet. Do not describe them as built.
+
+* ModelSource: a registered source of models (local, cloud, OpenAI-compatible gateway, custom). Existing providers become one source type. Identity is the source, not a raw API key.
+* RoutingPolicy: named policy of hard filters plus a scoring formula plus a fallback chain.
+* TaskSet: a developer's own set of representative tasks with expected outputs or graders.
+* BenchmarkRun: an execution of a TaskSet against selected models, producing measurements.
+* Scorecard: per-model, per-task local results (quality, cost, latency, reliability, JSON/tool success) that feed routing.
+* RoutingDecision: the chosen model plus the human-readable reasons it was chosen.
+* FallbackPlan: the ordered alternatives if the primary model fails a hard filter or call.
+* ExecutionTrace: a richer trace of a route or agent run, beyond today's flat `traces` row.
+
+## Non-negotiable product rules
+
+* Do not chase provider count. Breadth of providers is not the moat.
+* Do not make manual API keys the product identity. Sources and scorecards are the identity.
+* Do not promote the semantic cache as the main feature. It is one optional backend.
+* Do not promote agent mode until the P0 agent-safety branch lands.
+* Do not invent implemented features in docs, help text, or the TUI. Mark planned work as planned.
+* Do not make heavy dependencies (`torch`, `sentence-transformers`, `qdrant-client`) required for base routing. Keep the default route path slim.
+* Keep the local-first posture. No required hosted services, no telemetry by default.
+
+## Branch discipline
+
+* One branch equals one concern. No mega rewrites.
+* Do not mix security, packaging, routing, source abstraction, evals, and TUI in one branch.
+* Each branch follows: plan, implement, tests, review, merge.
+* Each branch declares explicit out-of-scope and a definition of done. See `docs/roadmap/BRANCH_ROADMAP.md` and the `branch-migration-planning` skill.
+
+## Accepted branch roadmap
+
+1. `refactor/slim-deps-and-cache-tiers`: slim default deps, exact cache default, semantic optional. Cache tier code already landed on this concern; packaging extras are the remaining work.
+2. `security/p0-agent-safety`: fix P0 agent-runtime security before any promotion of agent mode.
+3. `docs/v2-product-direction` or `docs/claude-operating-system-v2`: docs and Claude support system aligned to V2 (this branch).
+4. `fix/model-registry-integrity`: registry correctness, dedup, capability/pricing integrity.
+5. `refactor/config-routing-seam`: clean the `core/router.py -> services/init_service` config coupling.
+6. `architecture/model-source-abstraction`: introduce ModelSource, wrap existing providers behavior-preservingly.
+7. `sources/openai-compatible-and-ollama`: add local and OpenAI-compatible sources.
+8. `routing/policy-engine-v1`: hard filters, scoring, policies, fallback chains, route explanations.
+9. `evals/benchmark-scorecards-v1`: TaskSet, BenchmarkRun, scoring, Scorecards that feed routing.
+10. `design/tui-v2-workbench-experience`: TUI around sources, benchmarks, scorecards, routing, traces.
+11. `cache/semantic-cache-v2`: improve and harden the optional semantic cache.
+12. `agent/safe-agent-mode`: re-enable and promote agent mode only after P0 is fixed.
+
+## Current active branch guidance
+
+Read the branch name and constrain scope to that concern only:
+
+* contains `slim-deps-and-cache-tiers`: only the cache and dependency path. No routing, schema, or provider behavior changes.
+* contains `p0-agent-safety`: only agent-runtime security. No feature work.
+* contains `docs` or `claude-operating-system`: only docs and the Claude support system. No application source, no `pyproject.toml`, no schema.
+* contains `model-registry-integrity`: only registry data correctness.
+* contains `config-routing-seam`: only the config coupling seam.
+* contains `model-source`: only the ModelSource abstraction.
+* contains `routing` or `policy`: only routing policy and scoring.
+* contains `evals` or `benchmark`: only benchmarks and scorecards.
+* contains `tui`: only TUI and product experience.
+* contains `cache` (and not `slim-deps`): only the semantic cache backend.
+* contains `agent` (and not `p0`): only safe agent mode, and only after P0 landed.
+
+## Stop conditions (V2)
+
+Stop and ask the user before any of these, regardless of branch:
+
+* editing `pyproject.toml` when it was not the stated task.
+* adding or removing a dependency.
+* any DB schema change (no migration system exists).
+* changing routing behavior or model selection.
+* changing secrets, key handling, or token storage.
+* promoting agent mode, or relaxing `allow_shell` or sandbox confinement.
+* claiming a feature is implemented when it is planned.
+* creating root-level report files, `.claude/reports/`, `_verify/`, or `.verify/`.
+
+## Test commands (V2)
+
+* `pip install -e ".[dev]"` then `pytest`. Async mode is auto; mocks via `pytest-mock`.
+* `tests/tests_e2e_cli_simulation/` covers CLI behavior.
+* There is no lint, format, or typecheck command. Do not invent one or claim one runs. If `pyproject.toml` later adds such tooling under an explicit packaging branch, update this line then.
+
+## Review protocol (V2)
+
+* Use the branch-to-agent routing below to pick reviewers by branch.
+* Post-change review is required for non-trivial diffs.
+* Behavior preservation is required for any refactor or cleanup that claims no behavior change.
+* A qa bug hunt is required for risky changes (routing, cache correctness, persistence, agent runtime, benchmark scoring).
+* Agents are read-only reviewers. Main Claude implements after approval.
+
+## Branch-to-agent routing (V2)
+
+Some agents named here are pending creation on the agents step of the V2 docs branch. Where an agent does not yet exist, use the closest existing reviewer and note the gap.
+
+* docs or README or product positioning:
+  * skills: `readme-product-docs-review`, `product-direction-guard`
+  * agents: product-strategy-reviewer, docs-product-positioning-reviewer, slop-hunter
+  * confirmation: yes if positioning or claims change
+
+* dependency slimming or cache tiers:
+  * skills: `dependency-slimming-review`, `cache-tier-design`
+  * agents: python-packaging-reviewer, cache-architecture-reviewer, embeddings-retrieval-reviewer, database-persistence-reviewer, qa-sdet-lead
+  * confirmation: yes
+
+* P0 agent security:
+  * skills: `engineering-review-board`
+  * agents: security-architect, agent-runtime-architect, qa-sdet-lead, behavior-preservation-checker
+  * confirmation: yes
+
+* ModelSource abstraction:
+  * skills: `model-source-design`, `system-design-review`
+  * agents: model-source-architect, provider-integration-reviewer, api-contract-architect, database-persistence-reviewer
+  * confirmation: yes
+
+* routing policy and scoring:
+  * skills: `routing-policy-design`, `system-design-review`
+  * agents: routing-policy-architect, business-logic-reviewer, provider-integration-reviewer (latency), qa-sdet-lead
+  * confirmation: yes
+
+* benchmarks and scorecards:
+  * skills: `benchmark-scorecard-design`
+  * agents: benchmark-evals-architect, database-persistence-reviewer, qa-sdet-lead
+  * confirmation: yes
+
+* TUI product experience:
+  * skills: `tui-product-experience-review`
+  * agents: tui-product-designer, cli-interface-reviewer, motion-interaction-reviewer, qa-sdet-lead
+  * confirmation: yes if a workflow or output format changes
+
+* release or merge readiness:
+  * skills: `release-readiness-review`, `post-change-review`
+  * agents: release-readiness-manager, behavior-preservation-checker
+  * confirmation: this is the merge gate
+
+* branch planning for any of the above:
+  * skill: `branch-migration-planning`
+  * confirmation: not applicable, planning only

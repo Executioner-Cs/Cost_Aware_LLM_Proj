@@ -255,6 +255,63 @@ The routing matrix references `performance-scalability-engineer` for provider an
 
 > Everything below this line is the V2 direction layer. When it conflicts with older phrasing above, the V2 layer wins. This layer is additive: the architecture, security, provider, persistence, CLI, and readability expectations above still hold.
 
+## Operating loop (mandatory)
+
+Follow this loop on every non-trivial change, in order. Do not jump straight to Act. Each phase has a concrete output. This loop is the master sequence; the "Mandatory Implementation Gate", "Routing matrix", "Branch-to-agent routing (V2)", and "Stop conditions (V2)" below are the detail it draws on.
+
+1. Observe. Read the user request. Run `git status` and note the current branch. Read the relevant files. Identify product and architecture context from "Product identity (V2)" and "Current architecture". Output: a one or two sentence restatement of the task and the branch concern.
+
+2. Select skills and agents. Classify the task type(s) using the "Task routing table" below. Pick the matching skills from `.claude/skills/**` and the matching reviewer agents from `.claude/agents/**` (or the inline reviewer role named in "Branch-to-agent routing (V2)" when a named architect was intentionally not created as a file). Output: the selected skills and reviewers.
+
+3. Read the selected skills, then Plan. Actually open and read each selected `SKILL.md` before planning; do not just list names. Use them to set scope, anti-goals, risks, the test plan, and stop conditions, then clear the "Mandatory Implementation Gate" below. Output: a plan stating selected skills, selected reviewers, files likely touched, explicit scope, explicit anti-goals, data/schema/dependency/security risks, tests to run, and stop conditions. For High-risk work, stop here for user confirmation.
+
+4. Act in small steps. Implement small, scoped changes only. Do not broad-rewrite, do not mix unrelated roadmap items, do not change public behavior silently, do not add dependencies casually, and do not change DB schema without explicit justification. Stay inside the current branch concern ("Current active branch guidance").
+
+5. Verify. Run targeted tests for what changed, and full `pytest` when code changed. Run an import-purity probe when dependencies or imports are involved (confirm the default route path imports no heavy module). Run CLI smoke tests when CLI behavior changed. Use an isolated `ORCHESTRATOR_HOME` (a temp dir) for any command that writes state; never touch the real `~/.orchestrator/`.
+
+6. Board Review. Before commit, run the relevant reviewer roles. Each returns PASS, WARN, or FAIL with a one-line reason. Default required reviews: architecture, behavior preservation, QA, security (when relevant), product direction, slop/noise, and release readiness. Any FAIL blocks commit until it is resolved or explicitly accepted by the user.
+
+7. Commit and PR. Only when the user has asked to commit. Use a scoped commit message and a PR body that states what changed, the skills and reviewers used, the tests run, and the long-term architecture verdict. Never commit secrets or local-only Claude artifacts, and do not commit `.claude/agents/**` changes outside a reviewed agent branch.
+
+8. Reflect. Summarize what changed, what stayed unchanged, the tests run, the risks remaining, and the long-term architecture verdict (PASS, WARN, or FAIL) from the gate below.
+
+## Long-term architecture gate
+
+Short-term completion is not enough. Every branch must also pass a long-term architecture review before it is considered done. Ask:
+
+* Does this strengthen the local-first, benchmark-driven workbench identity?
+* Does it create a clean abstraction we can build on later, rather than a one-off?
+* Does it avoid dependency creep (no new heavy or unnecessary dependencies)?
+* Does it avoid schema debt (no unmanaged schema change; there is no migration system)?
+* Does it avoid raw URL or API-key-centric UX (sources and scorecards are the identity, not raw keys)?
+* Does it keep `core/router.py` from becoming a god object again?
+* Does it preserve user trust (no wrong-answer reuse, no silent behavior change, no data loss)?
+* Does it avoid fake feature claims (planned work is marked planned)?
+
+Record a verdict: PASS, WARN, or FAIL. If the verdict is FAIL, stop and report rather than proceeding to commit or merge.
+
+## Task routing table (skills and reviewers)
+
+Quick index. See "Routing matrix" and "Branch-to-agent routing (V2)" for full detail and confirmation rules. Reviewer names that were intentionally not created as agent files map to the closest committed agent inline, per "Branch-to-agent routing (V2)".
+
+| Task type | Skills | Reviewers |
+|-----------|--------|-----------|
+| source / provider | model-source-design, system-design-review | principal-system-architect, provider-integration-reviewer, api-contract-architect, database-persistence-reviewer, qa-sdet-lead |
+| routing policy | routing-policy-design, system-design-review | principal-system-architect, provider-integration-reviewer, behavior-preservation-checker, qa-sdet-lead |
+| evals / scorecards | benchmark-scorecard-design | database-persistence-reviewer, behavior-preservation-checker, qa-sdet-lead |
+| cache | cache-tier-design | embeddings-retrieval-reviewer, behavior-preservation-checker, database-persistence-reviewer, qa-sdet-lead |
+| DB / persistence | system-design-review | database-persistence-reviewer, security-architect, behavior-preservation-checker, qa-sdet-lead |
+| security / agent runtime | engineering-review-board | security-architect, agent-runtime-architect, behavior-preservation-checker, qa-sdet-lead |
+| CLI / TUI | tui-product-experience-review | cli-interface-reviewer, behavior-preservation-checker, qa-sdet-lead |
+| packaging / dependencies | dependency-slimming-review, implementation-plan-review | python-packaging-reviewer, behavior-preservation-checker, qa-sdet-lead |
+| docs / release | readme-product-docs-review, product-direction-guard, release-readiness-review | slop-hunter, behavior-preservation-checker, qa-sdet-lead |
+
+## Local and private instructions
+
+This repository is public on GitHub. Keep tracked Claude files public-safe. Do not put private roadmap strategy, competitive analysis, large autonomous prompts, personal workflow details, secrets, or local paths into `CLAUDE.md`, `.claude/CLAUDE.md`, or any other tracked file.
+
+Private or machine-local instructions (autonomous prompts, personal workflow, local paths) belong in `CLAUDE.local.md` at the repo root. It is git-ignored and must never be committed. If it does not exist you may create it locally; it stays local.
+
 ## Mandatory Implementation Gate
 
 This gate is mandatory. Claude must clear every step before writing or editing any code or non-trivial file in this repo. No implementation begins until the gate is cleared.
@@ -360,6 +417,12 @@ Stop and ask the user before any of these, regardless of branch:
 * promoting agent mode, or relaxing `allow_shell` or sandbox confinement.
 * claiming a feature is implemented when it is planned.
 * creating root-level report files, `.claude/reports/`, `_verify/`, or `.verify/`.
+* tests fail outside the current task's scope.
+* the selected skills or agents are missing and safety depends on them.
+* a change would expose private or internal Claude workflow, or competitive or roadmap strategy, in a tracked file.
+* `.claude/agents/**` would be committed, untracked, or modified outside a reviewed agent branch.
+* a destructive Git action would be required (`git reset --hard`, `git clean`, force-push, deleting tracked files).
+* the requested implementation conflicts with the product direction in "Product identity (V2)".
 
 ## Test commands (V2)
 

@@ -55,6 +55,19 @@ class AgentTurnResult:
     finish_reason: Optional[str] = None
 
 
+class MissingProviderDependencyError(RuntimeError):
+    """Raised when a provider SDK (an optional install extra) is not installed.
+
+    A ``RuntimeError`` subclass so the existing CLI/TUI error handling catches it
+    and shows the install hint, same as before.
+    """
+
+    def __init__(self, extra: str, hint: str) -> None:
+        self.extra = extra
+        self.hint = hint
+        super().__init__(hint)
+
+
 class BaseConnector(ABC):
     """
     Responsible for authenticating with a provider and discovering available models.

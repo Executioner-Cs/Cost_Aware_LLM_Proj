@@ -14,50 +14,18 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from core import classifier, reasons
-from core.cache import get_cache, MissingFeatureError
+from core.cache import get_cache
 from core.cost_estimator import estimate_tokens, estimate_cost
 from core.model_selector import select as select_model
 from core.validator import validate, ValidationError
 from db.models import Trace
 from db.repositories.models import list_enabled
 from db.repositories.traces import create as create_trace
+from providers.source import get_model_source
 from schemas.routing import RouteRequest, RouteResult
 from services.config_service import get_home, load_config
 from utils.crypto import decrypt
 from utils.console import console, print_warning
-
-
-# A missing provider SDK maps to its install extra. Keyed by the top-level
-# module that fails to import. groq's adapter reuses the OpenAI SDK, so a
-# missing "openai" surfaces the openai extra for a groq route too.
-_MISSING_SDK_EXTRA = {
-    "openai": ("openai", 'OpenAI support requires the openai extra. Install with: pip install "orchestrator-cli[openai]".'),
-    "anthropic": ("anthropic", 'Anthropic support requires the anthropic extra. Install with: pip install "orchestrator-cli[anthropic]".'),
-    "google": ("gemini", 'Gemini support requires the gemini extra. Install with: pip install "orchestrator-cli[gemini]".'),
-}
-
-
-def _get_adapter(provider: str):
-    import importlib
-    _MAP = {
-        "anthropic": "providers.anthropic.adapter.AnthropicAdapter",
-        "openai": "providers.openai.adapter.OpenAIAdapter",
-        "groq": "providers.groq.adapter.GroqAdapter",
-        "gemini": "providers.gemini.adapter.GeminiAdapter",
-    }
-    if provider not in _MAP:
-        raise ValueError(f"No adapter for provider '{provider}'")
-    module_path, class_name = _MAP[provider].rsplit(".", 1)
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError as exc:
-        # Only translate a genuinely missing provider SDK; re-raise anything else.
-        mapped = _MISSING_SDK_EXTRA.get((exc.name or "").split(".")[0])
-        if mapped is not None:
-            extra, message = mapped
-            raise MissingFeatureError(extra, message) from exc
-        raise
-    return getattr(module, class_name)()
 
 
 def route(request: RouteRequest, session: Session) -> RouteResult:
@@ -179,11 +147,11 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
         )
 
     api_key = decrypt(account.encrypted_token)
-    adapter = _get_adapter(selected.provider)
+    source = get_model_source(selected.provider)
 
     t0 = time.monotonic()
     try:
-        gen_result = adapter.generate(prompt, selected.external_model_id, api_key)
+        gen_result = source.generate(prompt, selected.external_model_id, api_key)
     except Exception as exc:
         latency_ms = int((time.monotonic() - t0) * 1000)
         _write_trace(

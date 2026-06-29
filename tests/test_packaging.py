@@ -152,28 +152,28 @@ def test_fresh_import_pulls_no_optional_libs():
     ],
 )
 def test_missing_provider_sdk_maps_to_extra(monkeypatch, provider, missing_module, extra):
-    from core import router
-    from core.cache import MissingFeatureError
+    from providers.source import get_model_source
+    from providers.base import MissingProviderDependencyError
 
     def boom(path):
         raise ModuleNotFoundError(f"No module named '{missing_module}'", name=missing_module)
 
     monkeypatch.setattr(importlib, "import_module", boom)
-    with pytest.raises(MissingFeatureError) as excinfo:
-        router._get_adapter(provider)
+    with pytest.raises(MissingProviderDependencyError) as excinfo:
+        get_model_source(provider).generate("hi", "m", "key")
     assert f'orchestrator-cli[{extra}]' in str(excinfo.value)
 
 
 def test_unrelated_import_error_is_not_masked(monkeypatch):
     """A failure that is not a known provider SDK must propagate unchanged."""
-    from core import router
+    from providers.source import get_model_source
 
     def boom(path):
         raise ModuleNotFoundError("No module named 'somethingelse'", name="somethingelse")
 
     monkeypatch.setattr(importlib, "import_module", boom)
     with pytest.raises(ModuleNotFoundError):
-        router._get_adapter("openai")
+        get_model_source("openai").generate("hi", "m", "key")
 
 
 # --------------------------------------------------------------------------- #

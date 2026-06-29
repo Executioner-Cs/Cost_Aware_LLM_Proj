@@ -23,11 +23,17 @@ def _run_goal(
 ) -> None:
     from db.session import get_session
     from agent.loop import run_agent_loop
-    from utils.console import console, print_error
+    from utils.console import console, print_error, print_warning
 
     session = None
     try:
         session = get_session()
+        # Be honest about what is and is not guaranteed. Surfaced once per run.
+        print_warning(
+            "Agent mode is experimental and not production-safe. Tools are confined to the "
+            "sandbox path and run_shell/run_python stay off unless you enable them, but network "
+            "access is NOT isolated. Review the goal and your sandbox_root before running."
+        )
         with console.status("[cyan]Agent running…"):
             final, _msgs = run_agent_loop(
                 session,

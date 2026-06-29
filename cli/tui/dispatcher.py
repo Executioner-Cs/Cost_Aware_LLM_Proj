@@ -167,7 +167,7 @@ class Dispatcher:
     def _cmd_route(self, args: list[str]) -> list[Any]:
         import argparse
         from schemas.routing import RouteRequest
-        from core.router import route
+        from services.routing_service import route_prompt
 
         p = _silent_parser("route")
         p.add_argument("prompt", nargs="+")
@@ -189,7 +189,7 @@ class Dispatcher:
         )
 
         try:
-            result = route(request, self.state.session)
+            result = route_prompt(request, session=self.state.session)
         except Exception as exc:
             return [Text(f"Error: {exc}", style="bold red")]
 

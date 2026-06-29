@@ -10,9 +10,8 @@ def cmd_route(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show routing plan without calling provider")] = False,
 ):
     """Route a prompt to the optimal LLM based on task and cost."""
-    from db.session import get_session
-    from core.router import route
     from schemas.routing import RouteRequest
+    from services.routing_service import route_prompt
     from utils.console import console, print_error
 
     request = RouteRequest(
@@ -23,9 +22,7 @@ def cmd_route(
     )
 
     try:
-        session = get_session()
-        result = route(request, session)
-        session.close()
+        result = route_prompt(request)
     except RuntimeError as exc:
         print_error(str(exc))
         raise typer.Exit(1)

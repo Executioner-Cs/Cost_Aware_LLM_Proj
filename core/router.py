@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from core import classifier, reasons
 from core.cache import get_cache
 from core.cost_estimator import estimate_tokens, estimate_cost
-from core.policy import decide as decide_route
+from core.policy import decide as decide_route, get_policy, POLICIES
 from core.validator import validate, ValidationError
 from db.models import Trace
 from db.repositories.models import list_enabled
@@ -45,6 +45,19 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
     task_type = request.task_type or classifier.classify(prompt)
     quality = request.quality
 
+    # Resolve the routing policy up front. The exact cache is keyed on
+    # prompt + task_type + quality only, so a cache hit is policy-blind. An
+    # explicit policy constrains which model may answer, so it must bypass the
+    # cache or it would silently reuse a default-policy answer from a different
+    # model. The default policy keeps using the cache exactly as before.
+    policy = get_policy(request.policy)
+    if request.policy and request.policy not in POLICIES:
+        print_warning(f"Unknown policy '{request.policy}'; using the default cheapest-capable policy.")
+    if request.task_set and not policy.prefer_scorecards:
+        print_warning(
+            f"--task-set is only used by scorecard-aware policies; ignoring it for policy '{policy.name}'."
+        )
+
     # ------------------------------------------------------------------ #
     # 3. Build cache backend (exact by default; semantic only when configured)
     #    The exact/off path imports no embeddings/vector dependencies.
@@ -52,12 +65,13 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
     cache = get_cache(config, session, home)
 
     # ------------------------------------------------------------------ #
-    # 4. Cache lookup (keyed by prompt + task_type + quality)
+    # 4. Cache lookup (keyed by prompt + task_type + quality). Explicit policies
+    #    bypass the cache so policy-driven model selection always runs.
     # ------------------------------------------------------------------ #
-    cache_result = cache.lookup(prompt, task_type, quality)
+    cache_result = cache.lookup(prompt, task_type, quality) if policy.is_default else None
 
     if cache_result:
-        # Cache HIT — write trace and return immediately
+        # Cache HIT: write trace and return immediately
         trace = _write_trace(
             session=session,
             prompt=prompt,
@@ -100,9 +114,34 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
         raise RuntimeError("No models in registry. Run `orchestrator connect <provider>` first.")
 
     # Default policy reproduces cheapest-capable selection exactly; explicit
-    # policies (privacy-first, quality-first, ...) plug in here without changing
-    # the default route. See core/policy.py.
-    selected = decide_route(all_models, task_type, quality, input_token_estimate).selected
+    # policies (privacy-first, quality-first, benchmarked, ...) were resolved
+    # above and plug in here without changing the default route. See core/policy.py.
+    scores = None
+    if policy.prefer_scorecards:
+        # Scorecard-aware routing: load the user's own benchmark scores. Scoped to
+        # a task set when given, otherwise the best score per model across all sets.
+        from services.benchmark_service import scores_by_model, get_task_set_by_name
+
+        task_set_id = None
+        if request.task_set:
+            task_set = get_task_set_by_name(session, request.task_set)
+            if not task_set:
+                # Do not silently fall back to all-task-set scores: the user asked
+                # to scope routing to a specific set, so a typo must fail loudly.
+                raise RuntimeError(
+                    f"Task set '{request.task_set}' not found. "
+                    "Create it with `orchestrator benchmark create` or check the name."
+                )
+            task_set_id = task_set.id
+        scores = scores_by_model(session, task_set_id)
+
+    decision = decide_route(
+        all_models, task_type, quality, input_token_estimate, policy=policy, scores=scores,
+    )
+    selected = decision.selected
+    # Surface the reasoning only for explicit policies; the default route output
+    # stays exactly as before (no extra line).
+    route_explanation = None if policy.is_default else decision.explanation
     if not selected:
         _write_trace(
             session=session, prompt=prompt, task_type=task_type,
@@ -135,6 +174,7 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
             estimated_cost_usd=est_cost,
             latency_ms=None,
             response_text=None,
+            route_explanation=route_explanation,
         )
 
     # ------------------------------------------------------------------ #
@@ -198,16 +238,20 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
         selected.cost_per_1m_output or 0.0,
     )
 
-    cache.store(
-        prompt=prompt,
-        task_type=task_type,
-        quality=quality,
-        response_text=gen_result.response_text,
-        provider=selected.provider,
-        model_id=selected.external_model_id,
-        input_tokens=gen_result.input_tokens,
-        output_tokens=gen_result.output_tokens,
-    )
+    # Only the default policy populates the cache. An explicit-policy answer is
+    # tied to that policy's model choice, and the cache key does not encode the
+    # policy, so storing it would let it leak into later default-route hits.
+    if policy.is_default:
+        cache.store(
+            prompt=prompt,
+            task_type=task_type,
+            quality=quality,
+            response_text=gen_result.response_text,
+            provider=selected.provider,
+            model_id=selected.external_model_id,
+            input_tokens=gen_result.input_tokens,
+            output_tokens=gen_result.output_tokens,
+        )
 
     # Cost warning
     warn_threshold = cost_cfg.get("warn_above_usd", 0.01)
@@ -238,6 +282,7 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
         estimated_cost_usd=actual_cost,
         latency_ms=gen_result.latency_ms,
         response_text=gen_result.response_text,
+        route_explanation=route_explanation,
     )
 
 

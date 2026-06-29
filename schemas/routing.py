@@ -9,6 +9,8 @@ class RouteRequest(BaseModel):
     task_type: Optional[str] = None        # auto-classified if None
     quality: str = "balanced"              # 'cheap' | 'balanced' | 'best'
     dry_run: bool = False
+    policy: Optional[str] = None           # routing policy name; None -> cheapest-capable default
+    task_set: Optional[str] = None         # scope a scorecard-aware policy to one task set
 
 
 class RouteResult(BaseModel):
@@ -25,3 +27,4 @@ class RouteResult(BaseModel):
     response_text: Optional[str]
     status: str = "ok"
     error_message: Optional[str] = None
+    route_explanation: Optional[str] = None   # set only for non-default policies

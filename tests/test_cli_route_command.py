@@ -32,6 +32,7 @@ def test_route_dry_run_flag_is_parsed(monkeypatch):
             estimated_cost_usd=0.0,
             latency_ms=None,
             response_text=None,
+            route_explanation=None,
         )
 
     monkeypatch.setattr("db.session.get_session", fake_get_session)
@@ -43,4 +44,12 @@ def test_route_dry_run_flag_is_parsed(monkeypatch):
 
     assert result.exit_code == 0
     assert captured["dry_run"] is True
+
+
+def test_route_help_lists_policy_and_task_set():
+    runner = CliRunner()
+    result = runner.invoke(app, ["route", "--help"])
+    assert result.exit_code == 0
+    out = result.output
+    assert "--policy" in out and "--task-set" in out
 

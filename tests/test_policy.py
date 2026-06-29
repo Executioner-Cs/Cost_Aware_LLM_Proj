@@ -108,3 +108,63 @@ def test_get_policy_resolves_names_safely():
     assert get_policy(None) is DEFAULT_POLICY
     assert get_policy("privacy-first").require_local is True
     assert get_policy("does-not-exist") is DEFAULT_POLICY      # safe fallback, never raises
+
+
+# --------------------------------------------------------------------------- #
+# Scorecard-aware (opt-in) policy. Default stays unchanged with the new fields.
+# --------------------------------------------------------------------------- #
+
+def test_default_policy_still_default_with_scorecard_fields():
+    assert DEFAULT_POLICY.is_default is True
+    assert POLICIES["benchmarked"].is_default is False
+    assert get_policy("benchmarked").prefer_scorecards is True
+
+
+def test_benchmarked_policy_prefers_high_scored_over_cheaper():
+    models = [_m("cheap", cost=0.1), _m("good", cost=5.0)]
+    # Without a policy the cheap model wins (behavior preserved).
+    assert decide(models, "simple", "balanced").selected.external_model_id == "cheap"
+    # With scorecards, the model that scored well on the user's tasks wins.
+    scored = decide(
+        models, "simple", "balanced",
+        policy=POLICIES["benchmarked"], scores={"good": 0.95, "cheap": 0.2},
+    )
+    assert scored.selected.external_model_id == "good"
+    assert "scored 95%" in scored.explanation
+
+
+def test_benchmarked_policy_no_scores_falls_back_to_cheapest():
+    models = [_m("cheap", cost=0.1), _m("pricey", cost=5.0)]
+    decision = decide(models, "simple", "balanced", policy=POLICIES["benchmarked"], scores={})
+    assert decision.selected.external_model_id == "cheap"        # explicit no-scorecard fallback
+    assert "fell back to cheapest-capable" in decision.explanation
+
+
+def test_benchmarked_policy_scored_beats_unscored_cheaper():
+    # 'good' has a scorecard, 'cheap' does not: the scored model still wins.
+    models = [_m("cheap", cost=0.1), _m("good", cost=5.0)]
+    decision = decide(
+        models, "simple", "balanced",
+        policy=POLICIES["benchmarked"], scores={"good": 0.9},
+    )
+    assert decision.selected.external_model_id == "good"
+
+
+def test_benchmarked_cost_is_the_tiebreaker_near_threshold():
+    # With weight_scorecard=3.0 and weight_cost=0.5 over this cost spread, a pricey
+    # model needs roughly a 16% score to overcome the cheapest model's cost bonus.
+    # Pin both sides of that crossover so the balance is intentional, not accidental.
+    models = [_m("cheap", cost=0.1), _m("pricey", cost=5.0)]
+    poor = decide(models, "simple", "balanced", policy=POLICIES["benchmarked"], scores={"pricey": 0.16})
+    assert poor.selected.external_model_id == "cheap"
+    ok = decide(models, "simple", "balanced", policy=POLICIES["benchmarked"], scores={"pricey": 0.17})
+    assert ok.selected.external_model_id == "pricey"
+
+
+def test_benchmarked_zero_score_ranks_same_as_unscored():
+    # score=0.0 and absent-from-scores are indistinguishable in ranking (both add 0
+    # to the scorecard term), so the cheapest model wins in both cases.
+    models = [_m("cheap", cost=0.1), _m("other", cost=5.0)]
+    unscored = decide(models, "simple", "balanced", policy=POLICIES["benchmarked"], scores={})
+    zeroed = decide(models, "simple", "balanced", policy=POLICIES["benchmarked"], scores={"other": 0.0})
+    assert unscored.selected.external_model_id == zeroed.selected.external_model_id == "cheap"

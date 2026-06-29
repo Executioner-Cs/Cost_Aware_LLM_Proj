@@ -377,7 +377,7 @@ Stop and ask the user before any of these, regardless of branch:
 
 ## Branch-to-agent routing (V2)
 
-Some agents named here are pending creation on the agents step of the V2 docs branch. Where an agent does not yet exist, use the closest existing reviewer and note the gap.
+The 14 reviewer agents under `.claude/agents/` are committed and canonical (formalized in `docs/review-agents-v1`). The V2-specific architect names referenced below (product-strategy-reviewer, model-source-architect, routing-policy-architect, benchmark-evals-architect, cache-architecture-reviewer, business-logic-reviewer, docs-product-positioning-reviewer, tui-product-designer, motion-interaction-reviewer, release-readiness-manager) were reviewed and intentionally NOT created: for a local single-user tool they would add review noise. Use the closest committed reviewer inline and apply the matching skill, for example: ModelSource / routing / benchmark work -> principal-system-architect + api-contract-architect + provider-integration-reviewer + qa-sdet-lead; release readiness -> qa-sdet-lead + behavior-preservation-checker; docs/positioning -> slop-hunter. Create a dedicated agent later only if a recurring need is proven.
 
 * docs or README or product positioning:
   * skills: `readme-product-docs-review`, `product-direction-guard`

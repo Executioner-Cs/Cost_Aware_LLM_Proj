@@ -22,7 +22,7 @@ from db.models import Trace
 from db.repositories.models import list_enabled
 from db.repositories.traces import create as create_trace
 from schemas.routing import RouteRequest, RouteResult
-from services.init_service import get_home, load_config
+from services.config_service import get_home, load_config
 from utils.crypto import decrypt
 from utils.console import console, print_warning
 

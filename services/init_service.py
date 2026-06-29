@@ -5,8 +5,6 @@ init no longer provisions Qdrant or warms an embedder.
 """
 from __future__ import annotations
 
-import os
-import tomllib
 from pathlib import Path
 
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -14,6 +12,7 @@ from rich.prompt import Prompt
 
 from db.session import get_session
 from db.session import create_all_tables
+from services.config_service import get_home, load_config
 from services.connect_service import connect as svc_connect
 from utils.console import console, print_error, print_success, print_warning
 from utils.env import get_provider_api_key, load_dotenv_once
@@ -60,10 +59,6 @@ blocked_shell_patterns = "rm -rf,mkfs,dd if=,:(){:|:&};:"
 # subprocesses. Do not treat this as a security boundary.
 network_disabled = true
 """
-
-
-def get_home() -> Path:
-    return Path(os.environ.get("ORCHESTRATOR_HOME", Path.home() / ".orchestrator"))
 
 
 def run_init(home: Path | None = None) -> None:
@@ -194,13 +189,3 @@ def _print_fallback_connect_commands(reason: str) -> None:
         console.print(f"[cyan]- orchestrator connect {provider}[/cyan]")
     console.print("[cyan]- orchestrator model list[/cyan]")
     console.print('[cyan]- orchestrator route "Summarize this text"[/cyan]')
-
-
-def load_config(home: Path | None = None) -> dict:
-    if home is None:
-        home = get_home()
-    config_path = home / "config.toml"
-    if not config_path.exists():
-        return {}
-    with open(config_path, "rb") as f:
-        return tomllib.load(f)

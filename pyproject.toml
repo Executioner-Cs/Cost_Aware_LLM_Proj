@@ -8,32 +8,67 @@ version = "0.1.0"
 description = "Cost-aware LLM orchestration with semantic caching, multi-provider routing, and sandboxed agent tools"
 readme = "README.md"
 requires-python = ">=3.11"
+# Base stays light: routing, the exact-match cache, persistence, and the CLI
+# run on these alone. Provider SDKs, the TUI, and the semantic-cache stack are
+# optional extras, loaded lazily only when actually used. See README install
+# section and docs/roadmap/BRANCH_ROADMAP.md (slim-deps branch).
 dependencies = [
     "typer>=0.12",
     "pydantic>=2.0",
     "sqlalchemy>=2.0",
-    "qdrant-client>=1.9",
-    "sentence-transformers>=2.7",
     "httpx>=0.27",
-    "python-dotenv>=1.0",
-    "questionary>=2.0",
-    "textual>=0.70",
-    "cryptography>=42.0",
     "rich>=13.0",
-    "tomllib; python_version < '3.11'",
-    "anthropic>=0.28",
-    "openai>=1.30",
-    "google-genai>=1.0",
+    "cryptography>=42.0",
+    "python-dotenv>=1.0",
 ]
 
 [project.scripts]
 orchestrator = "cli.main:app"
 
 [project.optional-dependencies]
+# Immersive Textual TUI and the interactive provider picker.
+tui = [
+    "textual>=0.70",
+    "questionary>=2.0",
+]
+# Per-provider SDKs (connectors/discovery use httpx; only generate() needs these).
+openai = [
+    "openai>=1.30",
+]
+anthropic = [
+    "anthropic>=0.28",
+]
+gemini = [
+    "google-genai>=1.0",
+]
+# All cloud provider SDKs at once. groq routes through the openai SDK, so it
+# needs no separate extra.
+providers = [
+    "openai>=1.30",
+    "anthropic>=0.28",
+    "google-genai>=1.0",
+]
+# Optional semantic cache (embeddings + vector store). Exact cache is the
+# default and needs none of this.
+heavy-cache = [
+    "sentence-transformers>=2.7",
+    "qdrant-client>=1.9",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-mock>=3.14",
+]
+# Everything optional at runtime (tui + providers + heavy-cache). Use
+# ".[all,dev]" to run the full test suite.
+all = [
+    "textual>=0.70",
+    "questionary>=2.0",
+    "openai>=1.30",
+    "anthropic>=0.28",
+    "google-genai>=1.0",
+    "sentence-transformers>=2.7",
+    "qdrant-client>=1.9",
 ]
 
 [tool.hatch.build.targets.wheel]

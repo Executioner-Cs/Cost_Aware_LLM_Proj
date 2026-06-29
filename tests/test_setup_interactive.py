@@ -35,7 +35,7 @@ def test_get_interactive_status_missing_dependency(monkeypatch):
 
     assert status.can_prompt is False
     assert status.reason_code == "missing_dependency"
-    assert "pip install -e" in status.message
+    assert 'orchestrator-cli[tui]' in status.message
 
 
 def test_pick_provider_skip_option_returns_none(monkeypatch):

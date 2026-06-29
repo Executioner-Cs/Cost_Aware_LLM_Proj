@@ -94,10 +94,30 @@ python -m venv .venv
 # macOS / Linux
 source .venv/bin/activate
 
-pip install -e ".[dev]"
+# Base install: routing, the exact-match cache, persistence, and the CLI.
+# Pulls no ML, vector, provider-SDK, or TUI packages.
+pip install -e .
 ```
 
-Note on dependencies: the default route path uses the exact-match cache and imports no machine-learning or vector libraries at runtime. However, the current `pyproject.toml` still lists `sentence-transformers`, `torch` (via that), and `qdrant-client` as base dependencies, so a base install pulls them in. Lightweight install profiles (optional extras so those packages are not required for base routing) are planned under the `refactor/slim-deps-and-cache-tiers` work and are not available yet. Do not rely on optional cache extras until they are documented here as shipped.
+The base install is intentionally light. The default route path uses the exact-match cache and imports no machine-learning or vector libraries. Install only the extras you need:
+
+| Extra | Adds | Needed for |
+|-------|------|------------|
+| `openai` | openai SDK | routing to OpenAI models |
+| `anthropic` | anthropic SDK | routing to Anthropic models |
+| `gemini` | google-genai SDK | routing to Gemini models |
+| `providers` | all three provider SDKs | routing to any cloud provider |
+| `tui` | textual, questionary | the immersive TUI and the interactive provider picker |
+| `heavy-cache` | sentence-transformers, qdrant-client | the optional semantic cache (`cache.mode = "semantic"`) |
+| `all` | everything above | a full-featured install |
+
+```bash
+pip install -e ".[providers]"        # cloud routing
+pip install -e ".[providers,tui]"    # cloud routing plus the TUI
+pip install -e ".[all]"              # everything optional
+```
+
+Provider SDKs, the TUI, and the semantic-cache stack load lazily, so a base install runs the CLI fine and a missing extra produces a clear message naming the one to install. groq routing reuses the openai SDK, so it needs the `openai` extra (there is no separate groq extra).
 
 ## First-time setup
 
@@ -196,7 +216,7 @@ API keys are encrypted at rest with Fernet and are never printed. Treat tool out
 
 The product is moving from a cost-aware router to a benchmark-driven routing workbench. Work is sequenced one concern per branch. Summary order (full detail in [docs/roadmap/BRANCH_ROADMAP.md](docs/roadmap/BRANCH_ROADMAP.md)):
 
-1. `refactor/slim-deps-and-cache-tiers`: slim default dependencies; exact cache default; semantic optional. (Cache tier code landed; packaging extras remain.)
+1. `refactor/slim-deps-and-cache-tiers`: slim default dependencies; exact cache default; semantic optional. (Cache tier code and the optional-dependency extras have landed.)
 2. `security/p0-agent-safety`: fix P0 agent-runtime security before any promotion of agent mode.
 3. `docs/v2-product-direction`: docs and Claude support system aligned to V2.
 4. `fix/model-registry-integrity`: registry correctness and integrity.
@@ -212,10 +232,12 @@ The product is moving from a cost-aware router to a benchmark-driven routing wor
 ## Development
 
 ```bash
-pip install -e ".[dev]"
+# Install the test tools plus every optional extra, so the full suite
+# (provider adapters, TUI, semantic cache) can import what it exercises.
+pip install -e ".[all,dev]"
 pytest
 ```
 
-The test suite covers the task classifier, cost estimator, model selector, cache (exact and semantic), router integration (with mocked providers), provider adapters, connect flows, and an end-to-end CLI simulation under `tests/tests_e2e_cli_simulation/`. There is no lint, format, or typecheck command in this repo.
+`[dev]` alone installs only the test tools (`pytest`, `pytest-asyncio`, `pytest-mock`); combine it with `[all]` to run the whole suite. The test suite covers the task classifier, cost estimator, model selector, cache (exact and semantic), router integration (with mocked providers), provider adapters, connect flows, optional-dependency packaging, and an end-to-end CLI simulation under `tests/tests_e2e_cli_simulation/`. There is no lint, format, or typecheck command in this repo.
 
 Architecture, product direction, and the branch roadmap live under [docs/](docs/). The operating guide for Claude Code in this repo is at [.claude/CLAUDE.md](.claude/CLAUDE.md).

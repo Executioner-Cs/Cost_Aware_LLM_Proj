@@ -51,7 +51,7 @@ The honest way to choose is to run a representative set of your own tasks across
 
 These are the domain concepts the product is organized around. Concepts marked planned are not yet implemented; they define the direction (see [docs/architecture/ORCHESTRATOR_V2_ARCHITECTURE.md](docs/architecture/ORCHESTRATOR_V2_ARCHITECTURE.md)).
 
-* Model Sources (planned abstraction): a registered source of models, local, cloud, OpenAI-compatible gateway, or custom. Today the unit is provider plus connected account.
+* Model Sources: a registered source of models, local, cloud, OpenAI-compatible, or custom. The abstraction exists today and cloud providers, Ollama, and OpenAI-compatible endpoints are supported. Source-as-primary-identity (replacing provider plus account) is still planned.
 * Task Sets (planned): your representative tasks with expected outputs or graders.
 * Benchmark Runs (planned): an execution of a Task Set across selected models, producing measurements.
 * Scorecards (planned): per-model, per-task local results that feed routing.
@@ -66,6 +66,7 @@ Implemented and working today:
 
 * Multi-provider routing across Anthropic, OpenAI, Groq, and Gemini. The router picks the cheapest model that satisfies the task's tier and capability constraints (not the cheapest model overall).
 * Dynamic model discovery: on `connect`, the provider's models API is queried for the models your key can access, rather than a hardcoded list.
+* Local and OpenAI-compatible sources: connect Ollama (`orchestrator connect ollama --base-url http://localhost:11434`) or any OpenAI-compatible endpoint (`orchestrator connect openai-compatible --base-url <url> --api-key <key>`); their models join the same routing pool over httpx, with no extra dependencies.
 * Encrypted credentials: API keys are Fernet-encrypted before they are written to SQLite.
 * A Typer CLI and a full-screen Textual TUI that run the same workflows.
 * Traces: every route records token counts, USD cost, latency, and cache hit or miss.
@@ -74,7 +75,7 @@ Implemented and working today:
 
 Current limitations:
 
-* Four cloud providers only. No local or OpenAI-compatible sources yet.
+* Sources: four cloud providers (Anthropic, OpenAI, Groq, Gemini), plus local Ollama and OpenAI-compatible HTTP endpoints. No hosted-gateway or custom-plugin sources yet.
 * No benchmark, task set, or scorecard system yet. Routing is cost-and-capability based, not scorecard-driven, today.
 * No routing policy engine yet (no configurable hard-filter-plus-scoring policies).
 * Base install pulls heavy dependencies today even though the default route path does not use them. See [Installation](#installation).
@@ -172,9 +173,6 @@ Run `orchestrator` with no arguments on an interactive terminal, or `orchestrato
 The following illustrate the intended V2 workflow. They do not exist today and will error if you try them. They are shown so the direction is clear.
 
 ```bash
-# Planned: register a local model source
-orchestrator source add ollama
-
 # Planned: define and run a benchmark over your own tasks
 orchestrator benchmark create my-tasks
 orchestrator benchmark run my-tasks --models gpt-4o-mini,llama3,claude-haiku

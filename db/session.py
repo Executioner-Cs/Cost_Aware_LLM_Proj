@@ -18,11 +18,33 @@ def get_db_path() -> Path:
     return home / "orchestrator.db"
 
 
+def _ensure_account_columns(engine) -> None:
+    """Add the ModelSource columns to an existing connected_accounts table.
+
+    This repo has no migration framework and ``create_all`` cannot ALTER an
+    existing table, so the nullable ``source_type`` / ``base_url`` columns are
+    added in place. Idempotent and safe: it runs only when the table already
+    exists and is missing them; brand-new DBs get the columns from create_all.
+    """
+    with engine.connect() as conn:
+        info = conn.exec_driver_sql("PRAGMA table_info(connected_accounts)").fetchall()
+        if not info:
+            return  # table not created yet
+        existing = {row[1] for row in info}
+        if "source_type" not in existing:
+            conn.exec_driver_sql("ALTER TABLE connected_accounts ADD COLUMN source_type VARCHAR")
+        if "base_url" not in existing:
+            conn.exec_driver_sql("ALTER TABLE connected_accounts ADD COLUMN base_url VARCHAR")
+        conn.commit()
+
+
 def get_engine(db_path: Path | None = None):
     if db_path is None:
         db_path = get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    return create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    _ensure_account_columns(engine)
+    return engine
 
 
 def create_all_tables(db_path: Path | None = None) -> None:

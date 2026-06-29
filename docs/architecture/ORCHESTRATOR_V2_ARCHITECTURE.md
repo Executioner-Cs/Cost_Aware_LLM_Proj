@@ -24,14 +24,14 @@ Known coupling debt: `core/router.py` pulls config via `services.init_service`. 
 
 The unit of the system shifts from "provider plus API key" to ModelSource, and routing shifts from "cheapest capable" to "policy over local scorecards."
 
-Target concepts (none are DB models yet):
+Target concepts (status noted per concept):
 
 * ModelSource: a registered source of models. Types: local (for example Ollama), cloud (today's providers), OpenAI-compatible gateway, custom. Identity is the source, not a raw key. Existing providers become one source type.
-  * ModelSource abstraction (status): the seam has landed in `providers/source.py`, wrapping the four cloud providers behind `ModelSource` (source identity is the provider name for now, `source_type = "cloud"`). `list_models` and `generate` delegate to the existing connector/adapter; the routing generate path calls `get_model_source(provider).generate(...)`. No new source types, no DB model, and user-facing commands stay provider/account based. Local / OpenAI-compatible / gateway sources and source-as-identity come in later branches.
+  * ModelSource abstraction (status): the seam has landed in `providers/source.py`. It wraps the four cloud providers plus local Ollama and OpenAI-compatible HTTP endpoints (`connect --base-url`), with `source_type` and `base_url` stored on `ConnectedAccount`. `list_models` and `generate` delegate per source; the routing generate path calls `get_model_source(...).generate(...)`. Source-as-primary-identity (replacing provider plus account) and hosted-gateway / custom sources are still future.
 * RoutingPolicy: a named policy of hard filters, a scoring formula, and a fallback chain.
-* TaskSet: a developer's representative tasks with expected outputs or graders.
-* BenchmarkRun: an execution of a TaskSet across selected models producing measurements.
-* Scorecard: per-model, per-task local results (quality, cost, latency, reliability, JSON and tool success) that feed routing.
+* TaskSet: a developer's representative tasks with expected outputs or graders. Status: implemented as the `task_sets` + `benchmark_tasks` tables (`orchestrator benchmark create` / `add-task`).
+* BenchmarkRun: an execution of a TaskSet across selected models producing measurements. Status: implemented as the `benchmark_runs` table (`orchestrator benchmark run`).
+* Scorecard: per-model local results that will feed routing. Status: implemented as the `scorecards` table with deterministic scoring only (exact / contains / json_valid), recording pass rate, average latency, and average cost. Latency/reliability as routing dimensions and any LLM-as-judge are not in v1. Benchmark-driven routing (the product's core promise) is wired in the next branch `routing/scorecard-aware-routing`: the policy engine will prefer models that scored well on the relevant task set, with an explicit fallback when no scorecard exists, so routing decisions are grounded in the user's own measurements rather than provider marketing.
 * RoutingDecision: the chosen model plus the reasons it was chosen.
 * FallbackPlan: the ordered alternatives if the primary fails a filter or a call.
 * ExecutionTrace: a richer trace of a route or agent run, beyond today's flat `traces` row.

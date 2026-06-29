@@ -117,6 +117,11 @@ def get_model_source(provider: str, *, source_type: str = "cloud", base_url: str
     """Resolve a ModelSource. Cloud providers come from the static registry;
     local / OpenAI-compatible sources are built per call from their ``base_url``."""
     if source_type and source_type != "cloud":
+        if source_type not in NON_CLOUD_SOURCE_TYPES:
+            raise ValueError(
+                f"Unknown source_type '{source_type}' for provider '{provider}'. "
+                f"Expected 'cloud' or one of: {', '.join(sorted(NON_CLOUD_SOURCE_TYPES))}."
+            )
         return ModelSource(provider_name=provider, source_type=source_type, base_url=base_url)
     source = _SOURCES.get(provider)
     if source is None:

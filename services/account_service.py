@@ -33,6 +33,13 @@ def sync_account(session: Session, account_id: str) -> ConnectedAccount:
     api_key = decrypt(account.encrypted_token) if account.encrypted_token else ""
 
     if source_type == "cloud":
+        if not account.encrypted_token:
+            # Detect the missing token locally rather than making a doomed API call
+            # that would return 401 and be reported as a misleading "key invalid".
+            raise ValueError(
+                f"Account '{account_id}' has no stored token; reconnect with "
+                f"`orchestrator connect {account.provider}`."
+            )
         from services.connect_service import _load_connector
         connector = _load_connector(account.provider, api_key)
         if not connector.validate_key():
@@ -41,10 +48,19 @@ def sync_account(session: Session, account_id: str) -> ConnectedAccount:
             raise ValueError(f"Key validation failed for account '{account_id}'")
         models_info = connector.list_models()
     else:
-        # No key to validate; an unreachable endpoint raises and the sync fails.
+        # No key to validate; normalize an unreachable-endpoint error to ValueError
+        # so the CLI/TUI sync handler reports it cleanly instead of dumping a raw
+        # httpx traceback (the connect path wraps the same call the same way).
         from providers.source import get_model_source
         source = get_model_source(account.provider, source_type=source_type, base_url=account.base_url)
-        models_info = source.list_models(api_key)
+        try:
+            models_info = source.list_models(api_key)
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(
+                f"Could not reach source '{account.provider}' at {account.base_url}: {exc}"
+            ) from exc
 
     now = datetime.now(timezone.utc).isoformat()
 

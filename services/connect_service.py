@@ -73,6 +73,18 @@ def connect(
             raise ValueError(
                 f"Source '{provider}' requires --base-url (for example http://localhost:8000/v1)."
             )
+        # Heads-up: the model registry keys identity by (provider, external_model_id),
+        # so two local endpoints of the same provider that expose a same-named model
+        # collide in the registry today. One endpoint per local provider is the
+        # supported configuration until source-qualified model identity lands.
+        existing_local = [a for a in get_by_provider(session, provider) if (a.source_type or "cloud") != "cloud"]
+        if existing_local:
+            from utils.console import print_warning
+            print_warning(
+                f"Another '{provider}' source is already connected. Models sharing a name "
+                f"across endpoints can collide in the registry; use one endpoint per local "
+                f"provider until source-qualified model identity lands."
+            )
         source = get_model_source(provider, source_type=source_type, base_url=base_url)
         try:
             models_info = source.list_models(api_key or "")

@@ -35,7 +35,7 @@ A developer can register models, benchmark them on their own tasks, and have rou
 ## Delayed (after MVP)
 
 * LLM-as-judge scoring beyond the minimum needed; start with exact and JSON or schema scoring.
-* Semantic cache v2 improvements; the optional semantic cache is not on the MVP critical path.
+* A lighter semantic cache (`semantic-cache-v2`) is future work and not on the MVP critical path. No semantic cache is currently implemented (the exact SQLite cache is the only cache), and there is no heavy-cache install path. Redis is a future option only if a daemon, team, or shared-cache mode is added.
 * TUI V2 polish and motion; a functional workbench layout is enough for MVP, polish follows.
 * Safe agent mode promotion; gated behind the P0 agent-safety work and not required for the routing and benchmarking thesis.
 

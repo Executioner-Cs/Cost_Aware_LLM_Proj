@@ -1,6 +1,8 @@
-"""SQLite payload CRUD for cache_entries table.
-Note: semantic_cache.py is the only caller from the routing path.
-This module provides direct access for CLI inspection commands.
+"""SQLite payload CRUD for the legacy cache_entries table.
+
+The legacy semantic cache that wrote this table was removed; the table is
+retained so old data and the DB schema are preserved. This module now backs
+only the `cache inspect` CLI/TUI command for inspecting any pre-existing rows.
 """
 from __future__ import annotations
 

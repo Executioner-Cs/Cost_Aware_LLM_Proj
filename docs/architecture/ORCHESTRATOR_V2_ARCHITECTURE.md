@@ -8,15 +8,15 @@ Layering, intended direction `cli -> services -> core -> providers/db/embeddings
 
 * `cli/`: Typer commands (`cli/commands/`) and a Textual TUI (`cli/tui/`) running the same workflows.
 * `services/`: init, connect, account, model, routing, trace orchestration.
-* `core/`: `router.py` pipeline, `classifier.py`, `model_selector.py`, `cache.py` (backend selector), `semantic_cache.py` (similarity store used only in semantic mode), `cost_estimator.py`, `llm_turn.py` (agent turn, no cache), `reasons.py`.
+* `core/`: `router.py` pipeline, `classifier.py`, `model_selector.py`, `cache.py` (backend selector: exact or off), `cost_estimator.py`, `llm_turn.py` (agent turn, no cache), `reasons.py`. The legacy `semantic_cache.py` was removed.
 * `providers/`: connector plus adapter pairs for Anthropic, OpenAI, Groq, Gemini behind ABCs in `providers/base.py`.
-* `db/`: SQLAlchemy models and repositories over SQLite. Tables: `connected_accounts`, `model_registry`, `traces`, `cache_entries` (semantic), `exact_cache`, `tool_calls`. No migration system.
-* `embeddings/`: local sentence-transformer embedding, loaded lazily, used only by the semantic cache.
+* `db/`: SQLAlchemy models and repositories over SQLite. Tables: `connected_accounts`, `model_registry`, `traces`, `exact_cache`, `tool_calls`, and `cache_entries` (legacy semantic table, kept to preserve schema and old data; no longer written). No migration system.
+* The `embeddings/` package and Qdrant vector store were removed with the legacy semantic cache.
 * `agent/`: experimental ReAct loop, path-confined tools, optional shell off by default.
 
 Routing pipeline today (`core/router.py`): normalize, classify, build cache backend, lookup, on miss estimate tokens, select cheapest model within tier and capability constraints, call provider adapter, validate, store, write trace.
 
-Cache tiers today (`core/cache.py`): `get_cache` returns `NoOpCache` (disabled or off), `ExactCache` (default, SQLite only, TTL on read), or `SemanticCacheBackend` (opt-in, lazy heavy imports). This is implemented.
+Cache today (`core/cache.py`): `get_cache` returns `NoOpCache` (disabled or off) or `ExactCache` (default, SQLite only, TTL on read). `cache.mode = "semantic"` raises a clear error: the legacy semantic backend was removed.
 
 Known coupling debt: `core/router.py` pulls config via `services.init_service`. Do not deepen it. It is slated for `refactor/config-routing-seam`.
 
@@ -43,8 +43,8 @@ Target routing flow:
 
 ## Cache tiers (current and forward)
 
-* Default exact-match SQLite cache stays the default. Slim, single-store, TTL on read.
-* Semantic cache stays optional. `cache/semantic-cache-v2` hardens it (TTL on lookup, long-prompt safety, SQLite-Qdrant drift handling). Semantic never becomes the default.
+* Exact-match SQLite cache stays the default and, today, the only implemented cache. Slim, single-store, TTL on read.
+* The legacy heavy semantic cache (embeddings + Qdrant) was removed. `cache/semantic-cache-v2` will build a lighter replacement (candidates: sqlite-vec, provider embeddings, FastEmbed). It will stay optional and never become the default. Not implemented.
 
 ## Safe agent mode (later)
 

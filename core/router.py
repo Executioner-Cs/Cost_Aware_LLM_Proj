@@ -94,7 +94,7 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
             session=session,
             prompt=prompt,
             task_type=task_type,
-            route_reason=reasons.SEMANTIC_CACHE_HIT,
+            route_reason=reasons.CACHE_HIT,
             provider=cache_result.provider,
             model_external_id=cache_result.model_id,
             cache_hit=1,
@@ -107,7 +107,7 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
         )
         return RouteResult(
             task_type=task_type,
-            route_reason=reasons.SEMANTIC_CACHE_HIT,
+            route_reason=reasons.CACHE_HIT,
             provider=cache_result.provider,
             model_id=cache_result.model_id,
             cache_hit=True,

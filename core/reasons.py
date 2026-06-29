@@ -1,6 +1,6 @@
 """Route reason code constants."""
 
-SEMANTIC_CACHE_HIT          = "semantic_cache_hit"
+CACHE_HIT                   = "cache_hit"
 SIMPLE_TASK_CHEAPEST        = "simple_task_cheapest_model"
 REASONING_TASK_BALANCED     = "reasoning_task_balanced_model"
 JSON_EXTRACT_JSON_CAPABLE   = "json_extract_json_capable_model"

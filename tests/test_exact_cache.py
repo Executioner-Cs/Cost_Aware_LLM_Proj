@@ -6,8 +6,6 @@ The exact path must work without importing the ML/vector stack. The
 any accidental import on the default route path fails loudly.
 """
 import sys
-import math
-import hashlib
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -16,7 +14,7 @@ from sqlalchemy import create_engine, inspect as sa_inspect
 from sqlalchemy.orm import sessionmaker
 
 from db.models import Base, ModelRegistry, ConnectedAccount, ExactCacheEntry
-from core.cache import get_cache, ExactCache, NoOpCache, SemanticCacheBackend
+from core.cache import get_cache, ExactCache, NoOpCache, MissingFeatureError
 from schemas.routing import RouteRequest
 
 
@@ -79,7 +77,6 @@ def test_get_cache_empty_config_defaults_exact(session, tmp_path):
 def test_default_cache_is_exact_not_semantic(session, tmp_path):
     cache = get_cache({"cache": {"enabled": True, "mode": "exact"}}, session, tmp_path)
     assert isinstance(cache, ExactCache)
-    assert not isinstance(cache, SemanticCacheBackend)
 
 
 def test_get_cache_disabled_returns_noop(session, tmp_path):
@@ -172,31 +169,13 @@ def test_route_exact_mode_no_heavy_imports(session, tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Semantic cache remains available when explicitly configured (deps present)
+# Semantic cache v1 was removed: mode = "semantic" raises a clear error
 # --------------------------------------------------------------------------- #
 
-def test_semantic_mode_available_when_configured(session, tmp_path, monkeypatch):
-    """mode = "semantic" builds the semantic backend and round-trips a hit.
-
-    A fake embedder is injected so the test exercises the real semantic backend
-    and Qdrant without loading sentence-transformers/torch.
-    """
-    def fake_embed(text: str):
-        h = int(hashlib.md5(text.encode()).hexdigest(), 16)
-        vec = [math.sin(h + i) for i in range(384)]
-        norm = math.sqrt(sum(v * v for v in vec))
-        return [v / norm for v in vec]
-
-    import embeddings.embedder as emb
-    monkeypatch.setattr(emb, "embed", fake_embed)
-
-    cache = get_cache(
-        {"cache": {"enabled": True, "mode": "semantic", "similarity_threshold": 0.5}},
-        session, tmp_path,
-    )
-    assert isinstance(cache, SemanticCacheBackend)
-    cache.store("hello world", "simple", "balanced", "Hi", "openai", "m", 3, 2)
-    hit = cache.lookup("hello world", "simple", "balanced")
-    assert hit is not None
-    assert hit.response_text == "Hi"
-    cache.close()
+def test_semantic_mode_removed_raises(session, tmp_path):
+    with pytest.raises(MissingFeatureError) as excinfo:
+        get_cache({"cache": {"enabled": True, "mode": "semantic"}}, session, tmp_path)
+    message = str(excinfo.value)
+    assert "Semantic cache v1 has been removed" in message
+    assert 'cache.mode = "exact"' in message
+    assert "semantic-cache-v2" in message

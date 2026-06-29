@@ -9,9 +9,9 @@ description = "Local-first CLI to benchmark and route prompts across local and c
 readme = "README.md"
 requires-python = ">=3.11"
 # Base stays light: routing, the exact-match cache, persistence, and the CLI
-# run on these alone. Provider SDKs, the TUI, and the semantic-cache stack are
-# optional extras, loaded lazily only when actually used. See README install
-# section and docs/roadmap/BRANCH_ROADMAP.md (slim-deps branch).
+# run on these alone. Provider SDKs and the TUI are optional extras, loaded
+# lazily only when actually used (a future semantic cache will be opt-in too).
+# See README install section and docs/roadmap/BRANCH_ROADMAP.md (slim-deps branch).
 dependencies = [
     "typer>=0.12",
     "pydantic>=2.0",

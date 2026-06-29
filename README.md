@@ -1,6 +1,6 @@
 # Orchestrator CLI
 
-> Benchmark local and cloud models on your own tasks, then route every prompt to the model that actually earned it, based on quality, cost, latency, privacy, reliability, and capability.
+> Benchmark local and cloud models on your own tasks, then route every prompt to the model that actually earned it, based on quality, cost, privacy, and capability (with latency and reliability planned).
 
 Orchestrator CLI is a local-first AI routing and benchmarking workbench for developers. It runs on your machine, keeps your data local, and is built to answer one question that leaderboards and provider marketing cannot answer for you: which model should I actually use for this task.
 
@@ -57,7 +57,7 @@ These are the domain concepts the product is organized around. Concepts marked p
 * Scorecards: per-model local results (pass rate, average latency and cost) that can feed routing (`orchestrator benchmark scorecards`). Grading is deterministic only (exact / contains / json_valid); no LLM-as-judge.
 * Routing Policies: hard filters plus a scoring formula plus a fallback chain (`default`/`cheapest`, `privacy-first`, `quality-first`, `benchmarked`).
 * Routing Decisions: the chosen model plus the reasons it was chosen. Explicit policies emit a human-readable explanation; the default route is unchanged.
-* Fallback Plans: the ordered alternatives if the primary model is filtered out, carried on each routing decision.
+* Fallback Plans: the ordered alternatives if the primary model is filtered out. The policy engine computes them on each decision; they are not yet surfaced in route output.
 * Execution Traces: a record of each route. Today traces are flat rows with cost, tokens, latency, and cache status; richer execution traces are planned.
 
 ## Current capabilities

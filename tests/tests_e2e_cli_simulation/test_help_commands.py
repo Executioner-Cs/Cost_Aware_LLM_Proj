@@ -26,3 +26,11 @@ def test_invalid_help_flag(runner):
     assert r.exit_code != 0
     assert "No such option" in (r.stdout + r.stderr)
 
+
+def test_help_does_not_claim_semantic_caching(runner):
+    # The heavy semantic cache was removed; --help must not advertise it (v0.2 honesty).
+    root = run_cli(runner, ["--help"])
+    assert "semantic cach" not in root.stdout.lower()
+    cache = run_cli(runner, ["cache", "--help"])
+    assert "semantic cach" not in cache.stdout.lower()
+

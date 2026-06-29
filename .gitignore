@@ -31,3 +31,14 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local / private Claude artifacts (never commit)
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/logs/
+.claude/cache/
+.claude/tmp/
+# Guard against accidental or unreviewed agent commits. The reviewer agents
+# already tracked under .claude/agents/ remain tracked and canonical; add a NEW
+# agent only deliberately, via a reviewed agent branch (git add -f).
+.claude/agents/

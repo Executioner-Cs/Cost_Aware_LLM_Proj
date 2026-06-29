@@ -10,4 +10,14 @@ Product, architecture, and roadmap docs live under **`docs/`**:
 * `docs/architecture/ORCHESTRATOR_V2_ARCHITECTURE.md` (current and future architecture)
 * `docs/architecture/decisions/` (ADRs)
 
+## Quickstart
+
+```bash
+pip install -e ".[dev]"   # install with dev dependencies
+pytest                    # run the test suite
+```
+
+There is no lint, format, or typecheck command. Private or machine-local
+instructions belong in `CLAUDE.local.md` (git-ignored, never committed).
+
 This pointer is intentionally tiny. Do not move repo guidance back into this root file.

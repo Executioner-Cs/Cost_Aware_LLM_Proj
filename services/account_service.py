@@ -16,21 +16,36 @@ def list_accounts(session: Session) -> list[ConnectedAccount]:
 
 
 def sync_account(session: Session, account_id: str) -> ConnectedAccount:
-    """Re-validate key + refresh model list for an account."""
-    from services.connect_service import _load_connector
+    """Re-validate (cloud) or re-discover (local) and refresh an account's models.
+
+    Identity is the source, not the provider name alone: an account carries a
+    ``source_type`` and ``base_url``. Cloud accounts validate the stored key and
+    list models through the provider connector, exactly as before. Local and
+    OpenAI-compatible sources have no connector and no key to validate, so they
+    re-discover models through the ModelSource using their ``source_type`` +
+    ``base_url`` (the same path routing and benchmarking already use)."""
     from utils.crypto import decrypt
     from db.models import ModelRegistry
 
     account = _resolve_account(session, account_id)
-    api_key = decrypt(account.encrypted_token)
-    connector = _load_connector(account.provider, api_key)
+    source_type = account.source_type or "cloud"
+    # Keyless local sources (e.g. Ollama) have no token; do not decrypt None.
+    api_key = decrypt(account.encrypted_token) if account.encrypted_token else ""
 
-    if not connector.validate_key():
-        account.status = "invalid"
-        update(session, account)
-        raise ValueError(f"Key validation failed for account '{account_id}'")
+    if source_type == "cloud":
+        from services.connect_service import _load_connector
+        connector = _load_connector(account.provider, api_key)
+        if not connector.validate_key():
+            account.status = "invalid"
+            update(session, account)
+            raise ValueError(f"Key validation failed for account '{account_id}'")
+        models_info = connector.list_models()
+    else:
+        # No key to validate; an unreachable endpoint raises and the sync fails.
+        from providers.source import get_model_source
+        source = get_model_source(account.provider, source_type=source_type, base_url=account.base_url)
+        models_info = source.list_models(api_key)
 
-    models_info = connector.list_models()
     now = datetime.now(timezone.utc).isoformat()
 
     orm_models = [

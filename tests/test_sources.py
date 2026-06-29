@@ -43,6 +43,15 @@ def test_get_model_source_builds_non_cloud():
     assert get_model_source("openai").source_type == "cloud"
 
 
+def test_source_id_distinguishes_local_endpoints():
+    # Cloud sources are unique by provider name; local sources by endpoint.
+    assert get_model_source("openai").source_id == "openai"
+    a = get_model_source("ollama", source_type="ollama", base_url="http://a:11434")
+    b = get_model_source("ollama", source_type="ollama", base_url="http://b:11434")
+    assert a.source_id == "ollama:http://a:11434"
+    assert a.source_id != b.source_id
+
+
 def test_source_modules_are_httpx_only():
     # Fresh interpreter: importing the new sources must pull no SDK/ML/vector
     # libs (httpx is a base dependency). A subprocess avoids pollution from other

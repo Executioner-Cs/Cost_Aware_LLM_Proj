@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from core import classifier, reasons
 from core.cache import get_cache
 from core.cost_estimator import estimate_tokens, estimate_cost
-from core.model_selector import select as select_model
+from core.policy import decide as decide_route
 from core.validator import validate, ValidationError
 from db.models import Trace
 from db.repositories.models import list_enabled
@@ -99,7 +99,10 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
     if not all_models:
         raise RuntimeError("No models in registry. Run `orchestrator connect <provider>` first.")
 
-    selected = select_model(all_models, task_type, quality, input_token_estimate)
+    # Default policy reproduces cheapest-capable selection exactly; explicit
+    # policies (privacy-first, quality-first, ...) plug in here without changing
+    # the default route. See core/policy.py.
+    selected = decide_route(all_models, task_type, quality, input_token_estimate).selected
     if not selected:
         _write_trace(
             session=session, prompt=prompt, task_type=task_type,

@@ -36,14 +36,18 @@ TASK_CAPABILITIES: dict[str, dict] = {
 }
 
 
-def select(
+def _cost_score(m: ModelRegistry) -> float:
+    """Combined input+output price proxy used to rank cheapest-first."""
+    return (m.cost_per_1m_input or 0.0) + (m.cost_per_1m_output or 0.0)
+
+
+def candidates(
     models: list[ModelRegistry],
     task_type: str,
     quality: str = "balanced",
     input_tokens: int = 0,
-) -> Optional[ModelRegistry]:
-    """
-    Return cheapest enabled model satisfying all constraints, or None.
+) -> list[ModelRegistry]:
+    """Enabled models satisfying all hard constraints, cheapest-first.
 
     Constraints:
       - enabled == 1
@@ -55,7 +59,7 @@ def select(
     min_tier = TIER_ORDER[QUALITY_MIN_TIER.get(quality, "small")]
     max_tier = TIER_ORDER[QUALITY_MAX_TIER.get(quality, "large")]
 
-    candidates: list[ModelRegistry] = []
+    pool: list[ModelRegistry] = []
     for m in models:
         if not m.enabled:
             continue
@@ -70,16 +74,18 @@ def select(
             continue
         if caps.get("supports_tools") and not m.supports_tools:
             continue
-        candidates.append(m)
+        pool.append(m)
 
-    if not candidates:
-        return None
+    pool.sort(key=_cost_score)
+    return pool
 
-    # Sort by combined cost (input + output proxy), cheapest first
-    def cost_score(m: ModelRegistry) -> float:
-        inp = m.cost_per_1m_input or 0.0
-        out = m.cost_per_1m_output or 0.0
-        return inp + out
 
-    candidates.sort(key=cost_score)
-    return candidates[0]
+def select(
+    models: list[ModelRegistry],
+    task_type: str,
+    quality: str = "balanced",
+    input_tokens: int = 0,
+) -> Optional[ModelRegistry]:
+    """Return the cheapest enabled model satisfying all constraints, or None."""
+    pool = candidates(models, task_type, quality, input_tokens)
+    return pool[0] if pool else None

@@ -26,14 +26,18 @@ class ConnectedAccount(Base):
     provider = Column(String, nullable=False)
     display_name = Column(String)
     email = Column(String)
-    auth_method = Column(String, nullable=False)   # 'oauth' | 'pat' | 'session_cookie'
-    encrypted_token = Column(Text, nullable=False)
+    auth_method = Column(String, nullable=False)   # 'oauth' | 'pat' | 'session_cookie' | 'none'
+    encrypted_token = Column(Text, nullable=True)  # nullable: local/keyless sources (e.g. Ollama) have no key
     encrypted_refresh = Column(Text)
     token_expires_at = Column(String)
     plan = Column(String)
     status = Column(String, default="active")
     connected_at = Column(String, nullable=False)
     last_synced_at = Column(String)
+    # ModelSource fields. Cloud providers leave these defaulted; local and
+    # OpenAI-compatible sources set source_type and a base_url endpoint.
+    source_type = Column(String, default="cloud")
+    base_url = Column(String)
 
     models = relationship("ModelRegistry", back_populates="account", cascade="all, delete-orphan")
 

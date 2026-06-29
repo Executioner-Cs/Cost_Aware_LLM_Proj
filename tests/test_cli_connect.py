@@ -50,7 +50,7 @@ def test_cmd_connect_reads_account_fields_before_session_close(monkeypatch):
     def fake_get_session():
         return session
 
-    def fake_connect(_session, _provider, _api_key):
+    def fake_connect(_session, _provider, _api_key, base_url=None):
         return _DetachedLikeAccount(_session)
 
     def fake_print_success(message):

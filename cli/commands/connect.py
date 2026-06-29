@@ -9,36 +9,43 @@ from utils.env import get_provider_api_key, load_dotenv_once
 
 
 def cmd_connect(
-    provider: Annotated[str, typer.Argument(help="Provider: anthropic | openai | groq | gemini")],
+    provider: Annotated[str, typer.Argument(help="Provider: anthropic | openai | groq | gemini | ollama | openai-compatible")],
     api_key: Annotated[
         str,
         typer.Option(
             "--api-key",
-            help="API key (PAT). If omitted, uses .env/env var; otherwise prompts.",
+            help="API key (PAT). If omitted, uses .env/env var; otherwise prompts (cloud providers).",
             hide_input=True,
         ),
     ] = "",
+    base_url: Annotated[
+        str,
+        typer.Option(
+            "--base-url",
+            help="Endpoint for source types (ollama, openai-compatible), e.g. http://localhost:11434.",
+        ),
+    ] = "",
 ):
-    """Connect a provider account using an API key."""
+    """Connect a cloud provider (API key) or a source (ollama / openai-compatible base URL)."""
     session = None
     try:
         key = (api_key or "").strip()
+        bu = (base_url or "").strip() or None
+        is_source = bu is not None or provider.lower() in {"ollama", "openai-compatible", "openai_compatible"}
+
         if not key:
             load_dotenv_once()
             key = (get_provider_api_key(provider) or "").strip()
-        if not key:
-            key = typer.prompt(
-                f"{provider} API key",
-                hide_input=True,
-            ).strip()
-        if not key:
+        if not key and not is_source:
+            key = typer.prompt(f"{provider} API key", hide_input=True).strip()
+        if not key and not is_source:
             raise ValueError(
                 "API key is required. Pass --api-key, set it in .env, or enter it at the prompt."
             )
 
         with console.status(f"[cyan]Connecting to {provider}..."):
             session = get_session()
-            account = svc_connect(session, provider, key)
+            account = svc_connect(session, provider, key, base_url=bu)
 
             account_id = account.id
             display_name = account.display_name

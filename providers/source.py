@@ -71,6 +71,7 @@ class ModelSource:
 
     provider_name: str
     source_type: str = "cloud"
+    base_url: str | None = None
 
     @property
     def source_id(self) -> str:
@@ -83,16 +84,36 @@ class ModelSource:
         return _load_class(_ADAPTERS[self.provider_name])()
 
     def list_models(self, api_key: str) -> list[ModelInfo]:
+        if self.source_type == "ollama":
+            from providers import ollama
+            return ollama.list_models(self.base_url)
+        if self.source_type == "openai_compatible":
+            from providers import openai_compatible
+            return openai_compatible.list_models(self.base_url, api_key)
         return self._connector(api_key).list_models()
 
     def generate(self, prompt: str, model_id: str, api_key: str, **kwargs) -> GenerateResult:
+        if self.source_type == "ollama":
+            from providers import ollama
+            return ollama.generate(self.base_url, prompt, model_id, **kwargs)
+        if self.source_type == "openai_compatible":
+            from providers import openai_compatible
+            return openai_compatible.generate(self.base_url, prompt, model_id, api_key, **kwargs)
         return self._adapter().generate(prompt, model_id, api_key, **kwargs)
 
+
+# Source types that are not the four built-in cloud providers. They carry a
+# per-instance base_url and are built on demand rather than from the registry.
+NON_CLOUD_SOURCE_TYPES = frozenset({"ollama", "openai_compatible"})
 
 _SOURCES = {name: ModelSource(provider_name=name) for name in _ADAPTERS}
 
 
-def get_model_source(provider: str) -> ModelSource:
+def get_model_source(provider: str, *, source_type: str = "cloud", base_url: str | None = None) -> ModelSource:
+    """Resolve a ModelSource. Cloud providers come from the static registry;
+    local / OpenAI-compatible sources are built per call from their ``base_url``."""
+    if source_type and source_type != "cloud":
+        return ModelSource(provider_name=provider, source_type=source_type, base_url=base_url)
     source = _SOURCES.get(provider)
     if source is None:
         raise ValueError(f"No model source for provider '{provider}'")

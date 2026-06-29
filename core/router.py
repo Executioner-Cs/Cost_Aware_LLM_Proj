@@ -146,8 +146,12 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
             "Run `orchestrator accounts sync` or re-connect the provider."
         )
 
-    api_key = decrypt(account.encrypted_token)
-    source = get_model_source(selected.provider)
+    api_key = decrypt(account.encrypted_token) if account.encrypted_token else ""
+    source = get_model_source(
+        selected.provider,
+        source_type=account.source_type or "cloud",
+        base_url=account.base_url,
+    )
 
     t0 = time.monotonic()
     try:

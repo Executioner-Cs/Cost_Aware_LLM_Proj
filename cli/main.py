@@ -62,7 +62,18 @@ def _is_interactive_tty() -> bool:
 
 
 def _launch_tui() -> None:
-    from cli.tui.app import create_app
+    try:
+        from cli.tui.app import create_app
+    except ModuleNotFoundError as exc:
+        if (exc.name or "").split(".")[0] in ("textual", "questionary"):
+            typer.secho(
+                'The TUI requires the tui extra. Install with: '
+                'pip install "orchestrator-cli[tui]" or use CLI commands directly.',
+                fg="yellow",
+                err=True,
+            )
+            raise typer.Exit(1) from exc
+        raise
     tui = create_app()
     tui.run()
 

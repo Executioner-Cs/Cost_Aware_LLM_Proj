@@ -14,7 +14,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from core import classifier, reasons
-from core.cache import get_cache
+from core.cache import get_cache, MissingFeatureError
 from core.cost_estimator import estimate_tokens, estimate_cost
 from core.model_selector import select as select_model
 from core.validator import validate, ValidationError
@@ -25,6 +25,16 @@ from schemas.routing import RouteRequest, RouteResult
 from services.init_service import get_home, load_config
 from utils.crypto import decrypt
 from utils.console import console, print_warning
+
+
+# A missing provider SDK maps to its install extra. Keyed by the top-level
+# module that fails to import. groq's adapter reuses the OpenAI SDK, so a
+# missing "openai" surfaces the openai extra for a groq route too.
+_MISSING_SDK_EXTRA = {
+    "openai": ("openai", 'OpenAI support requires the openai extra. Install with: pip install "orchestrator-cli[openai]".'),
+    "anthropic": ("anthropic", 'Anthropic support requires the anthropic extra. Install with: pip install "orchestrator-cli[anthropic]".'),
+    "google": ("gemini", 'Gemini support requires the gemini extra. Install with: pip install "orchestrator-cli[gemini]".'),
+}
 
 
 def _get_adapter(provider: str):
@@ -38,7 +48,15 @@ def _get_adapter(provider: str):
     if provider not in _MAP:
         raise ValueError(f"No adapter for provider '{provider}'")
     module_path, class_name = _MAP[provider].rsplit(".", 1)
-    module = importlib.import_module(module_path)
+    try:
+        module = importlib.import_module(module_path)
+    except ModuleNotFoundError as exc:
+        # Only translate a genuinely missing provider SDK; re-raise anything else.
+        mapped = _MISSING_SDK_EXTRA.get((exc.name or "").split(".")[0])
+        if mapped is not None:
+            extra, message = mapped
+            raise MissingFeatureError(extra, message) from exc
+        raise
     return getattr(module, class_name)()
 
 

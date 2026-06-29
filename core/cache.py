@@ -247,10 +247,9 @@ class SemanticCacheBackend(BaseCache):
             from core.semantic_cache import SemanticCache  # lazy: pulls qdrant-client
         except ModuleNotFoundError as exc:
             raise MissingFeatureError(
-                "cache",
-                'semantic cache requires a vector backend. Install the light backend: '
-                'pip install "orchestrator-cli[cache]"  (or the heavy backend: '
-                'pip install "orchestrator-cli[heavy-cache]"). Or set [cache] mode = "exact".',
+                "heavy-cache",
+                'Semantic cache requires the heavy-cache extra. Install with: '
+                'pip install "orchestrator-cli[heavy-cache]" or set cache.mode = "exact".',
             ) from exc
         self._inner = SemanticCache(
             qdrant_path=home / "qdrant",
@@ -266,10 +265,9 @@ class SemanticCacheBackend(BaseCache):
                 from embeddings.embedder import embed  # lazy: pulls sentence-transformers/torch
             except ModuleNotFoundError as exc:
                 raise MissingFeatureError(
-                    "cache",
-                    'semantic cache needs an embedding backend. Install: '
-                    'pip install "orchestrator-cli[cache]"  (FastEmbed, no PyTorch) or '
-                    'pip install "orchestrator-cli[heavy-cache]". Or set [cache] mode = "exact".',
+                    "heavy-cache",
+                    'Semantic cache requires the heavy-cache extra. Install with: '
+                    'pip install "orchestrator-cli[heavy-cache]" or set cache.mode = "exact".',
                 ) from exc
             # Keep only the latest prompt's vector: one route embeds once.
             self._embed_cache = {prompt: embed(prompt)}

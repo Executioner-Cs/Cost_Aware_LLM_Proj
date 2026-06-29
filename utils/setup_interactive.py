@@ -45,7 +45,7 @@ def get_interactive_status(console: Console) -> InteractiveStatus:
             reason_code="missing_dependency",
             message=(
                 "Interactive provider picker unavailable because 'questionary' is not installed. "
-                "Activate your .venv and run: pip install -e \".[dev]\""
+                'Install the tui extra: pip install "orchestrator-cli[tui]".'
             ),
         )
     return InteractiveStatus(

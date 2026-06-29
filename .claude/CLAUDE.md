@@ -269,7 +269,7 @@ Follow this loop on every non-trivial change, in order. Do not jump straight to 
 
 5. Verify. Run targeted tests for what changed, and full `pytest` when code changed. Run an import-purity probe when dependencies or imports are involved (confirm the default route path imports no heavy module). Run CLI smoke tests when CLI behavior changed. Use an isolated `ORCHESTRATOR_HOME` (a temp dir) for any command that writes state; never touch the real `~/.orchestrator/`.
 
-6. Board Review. Before commit, run the relevant reviewer roles. Each returns PASS, WARN, or FAIL with a one-line reason. Default required reviews: architecture, behavior preservation, QA, security (when relevant), product direction, slop/noise, and release readiness. Any FAIL blocks commit until it is resolved or explicitly accepted by the user.
+6. Board Review. Before commit, run the relevant reviewer roles. Each returns PASS, WARN, or FAIL with a one-line reason. Default required reviews: architecture, behavior preservation, QA, security (when relevant), product direction, code simplicity (run the `code-simplicity-review` skill with the `slop-hunter` agent; see "Code simplicity gate"), and release readiness. Any FAIL blocks commit until it is resolved or explicitly accepted by the user.
 
 7. Commit and PR. Only when the user has asked to commit. Use a scoped commit message and a PR body that states what changed, the skills and reviewers used, the tests run, and the long-term architecture verdict. Never commit secrets or local-only Claude artifacts, and do not commit `.claude/agents/**` changes outside a reviewed agent branch.
 
@@ -289,6 +289,15 @@ Short-term completion is not enough. Every branch must also pass a long-term arc
 * Does it avoid fake feature claims (planned work is marked planned)?
 
 Record a verdict: PASS, WARN, or FAIL. If the verdict is FAIL, stop and report rather than proceeding to commit or merge.
+
+## Code simplicity gate (mandatory for code changes)
+
+Every code change must pass the Code Simplicity Review before merge. Read `.claude/skills/code-simplicity-review/SKILL.md` before an implementation branch and run it with the `slop-hunter` agent before commit. The goal is small, boring, readable code; the gate fails AI slop (bloat, duplication, speculative abstractions, god objects). Full detail lives in the skill; the summary:
+
+* Before coding: state the simplest implementation, why no larger abstraction is needed, files likely touched, files that must not be touched, and what "too much code" would look like for this task.
+* During coding: edit existing seams over new systems; functions over classes unless state or a contract justifies one; one clear path; no speculative compatibility layers, config knobs, or public API; no vague manager/service/factory wrappers around simple logic.
+* After coding: score Readability, Size, Duplication, Architecture, Long-term maintenance, Tests, and Slop detection as PASS, WARN, or FAIL, then run a final simplification pass (delete, inline, rename, simplify) and report what was removed and why the design is the simplest maintainable version.
+* A FAIL blocks merge until resolved or explicitly accepted by the user. Skip only for trivial one-line or comment-only edits, and say you are skipping it and why.
 
 ## Task routing table (skills and reviewers)
 

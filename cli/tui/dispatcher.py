@@ -47,43 +47,44 @@ class SessionState:
 # ── Dispatcher ───────────────────────────────────────────────────────────────
 
 HELP_TEXT = """\
-[bold cyan]Available commands[/bold cyan]
+[bold cyan]Orchestrator workbench[/bold cyan]  benchmark models on your own tasks, then route to the one that earned it.
 
-  [bold]route[/bold] [cyan]<prompt>[/cyan] [--task T] [--quality Q] [--dry-run]
-      Route a prompt to the optimal model.
+[bold]Sources[/bold]
+  [bold]connect[/bold] [cyan]<provider>[/cyan] [--api-key KEY] [--base-url URL]
+      Cloud: anthropic | openai | groq | gemini  (needs --api-key)
+      Local: connect ollama (keyless) | connect openai-compatible --base-url URL
+  [bold]accounts[/bold] list | sync [cyan]<id>[/cyan] | disconnect [cyan]<id>[/cyan]
+      Manage connected sources.
+  [bold]model list[/bold]
+      Show all discovered models.
+
+[bold]Benchmarks[/bold]
+  [bold]benchmark create[/bold] [cyan]<name>[/cyan] [--description D]
+  [bold]benchmark add-task[/bold] [cyan]<set> <prompt>[/cyan] --expected E [--grader exact|contains|json_valid]
+  [bold]benchmark run[/bold] [cyan]<set>[/cyan] [--models m1,m2]
+  [bold]benchmark scorecards[/bold] [--task-set S]
+      Build task sets, run them across your models, and view local scorecards.
+
+[bold]Routing[/bold]
+  [bold]route[/bold] [cyan]<prompt>[/cyan] [--task T] [--quality Q] [--policy P] [--task-set S] [--dry-run]
       --task    : simple | json_extract | reasoning | vision | tools
       --quality : cheap | balanced (default) | best
-      --dry-run : estimate cost without calling the provider
-
-  [bold]connect[/bold] [cyan]<provider>[/cyan] [--api-key KEY]
-      Connect an Anthropic or OpenAI account.
-
-  [bold]accounts[/bold] list | sync [cyan]<id>[/cyan] | disconnect [cyan]<id>[/cyan]
-      Manage connected provider accounts.
-
-  [bold]model list[/bold]
-      Show all models in the registry.
-
-  [bold]trace[/bold] list [--limit N] | show [cyan]<id>[/cyan]
-      Browse routing history.
-
-  [bold]cache[/bold] stats | inspect [cyan]<id>[/cyan] | clear [--task-type T] | threshold [cyan]<val>[/cyan]
-      Manage the semantic cache.
-
+      --policy  : default | privacy-first | quality-first | benchmarked
+      --task-set: scope the benchmarked policy to one task set's scorecards
   [bold]quality[/bold] [cyan]<cheap|balanced|best>[/cyan]
       Set the default quality tier for this session.
 
-  [bold]init[/bold]
-      Re-initialise the home directory (safe to re-run).
+[bold]Inspect[/bold]
+  [bold]trace[/bold] list [--limit N] | show [cyan]<id>[/cyan]
+      Browse routing history.
+  [bold]cache[/bold] stats | inspect [cyan]<id>[/cyan] | clear [--task-type T]
+      Manage the exact-match response cache.
 
-  [bold]clear[/bold]
-      Clear the output panel.
-
-  [bold]help[/bold] | [bold]?[/bold]
-      Show this help.
-
-  [bold]quit[/bold] | [bold]exit[/bold] | [bold]q[/bold]
-      Exit Orchestrator.
+[bold]Session[/bold]
+  [bold]init[/bold]                 Re-initialise the home directory (safe to re-run).
+  [bold]clear[/bold]                Clear the output panel.
+  [bold]help[/bold] | [bold]?[/bold]             Show this help.
+  [bold]quit[/bold] | [bold]exit[/bold] | [bold]q[/bold]     Exit Orchestrator.
 """
 
 
@@ -141,6 +142,9 @@ class Dispatcher:
             case "cache":
                 return self._cmd_cache(args)
 
+            case "benchmark":
+                return self._cmd_benchmark(args)
+
             case "quality":
                 return self._cmd_quality(args)
 
@@ -174,11 +178,13 @@ class Dispatcher:
         p.add_argument("--task", default=None)
         p.add_argument("--quality", default=self.state.quality)
         p.add_argument("--dry-run", action="store_true")
+        p.add_argument("--policy", default=None)
+        p.add_argument("--task-set", dest="task_set", default=None)
 
         try:
             ns = p.parse_args(args)
         except SystemExit as exc:
-            return [Text(f"Usage: route <prompt> [--task T] [--quality Q] [--dry-run]", style="yellow")]
+            return [Text("Usage: route <prompt> [--task T] [--quality Q] [--policy P] [--task-set S] [--dry-run]", style="yellow")]
 
         prompt = " ".join(ns.prompt)
         request = RouteRequest(
@@ -186,6 +192,8 @@ class Dispatcher:
             task_type=ns.task,
             quality=ns.quality,
             dry_run=ns.dry_run,
+            policy=ns.policy,
+            task_set=ns.task_set,
         )
 
         try:
@@ -226,6 +234,9 @@ class Dispatcher:
 
         renderables: list[Any] = [meta]
 
+        if result.route_explanation:
+            renderables.append(Text(result.route_explanation, style="dim"))
+
         if result.response_text:
             renderables.append(
                 Panel(result.response_text, title="Answer", border_style="green")
@@ -242,22 +253,25 @@ class Dispatcher:
         p = _silent_parser("connect")
         p.add_argument("provider")
         p.add_argument("--api-key", default=None)
+        p.add_argument("--base-url", dest="base_url", default=None)
 
         try:
             ns = p.parse_args(args)
         except SystemExit:
-            return [Text("Usage: connect <provider> [--api-key KEY]", style="yellow")]
+            return [Text("Usage: connect <provider> [--api-key KEY] [--base-url URL]", style="yellow")]
 
         api_key = ns.api_key
-        if not api_key:
-            # Can't prompt interactively in TUI; instruct user
+        # Local sources can be keyless (Ollama) or key-via-base_url (OpenAI-compatible);
+        # only cloud providers must have a key supplied inline (no interactive prompt here).
+        is_local = ns.provider.lower() in {"ollama", "openai-compatible", "openai_compatible"}
+        if not api_key and not is_local and not ns.base_url:
             return [Text(
                 f"Please supply the key inline:  connect {ns.provider} --api-key sk-...",
                 style="yellow"
             )]
 
         try:
-            account = svc_connect(self.state.session, ns.provider, api_key)
+            account = svc_connect(self.state.session, ns.provider, api_key or "", base_url=ns.base_url)
             self.state.refresh_stats()
             return [Text(
                 f"✓  Connected [bold]{ns.provider}[/bold] "
@@ -474,6 +488,157 @@ class Dispatcher:
             return [Text(f"✓  Deleted {deleted} cache entries.", style="green")]
 
         return [Text(f"Unknown: cache {sub}", style="red")]
+
+    # ── Benchmarks (workbench) ────────────────────────────────────────────────
+
+    _BENCH_USAGE = (
+        "Usage: benchmark create <name> [--description D] | "
+        "add-task <set> <prompt> --expected E [--grader G] | "
+        "run <set> [--models m1,m2] | scorecards [--task-set S]"
+    )
+
+    def _cmd_benchmark(self, args: list[str]) -> list[Any]:
+        if not args:
+            return [Text(self._BENCH_USAGE, style="yellow")]
+        sub, rest = args[0].lower(), args[1:]
+        if sub == "create":
+            return self._bench_create(rest)
+        if sub in ("add-task", "add_task"):
+            return self._bench_add_task(rest)
+        if sub == "run":
+            return self._bench_run(rest)
+        if sub == "scorecards":
+            return self._bench_scorecards(rest)
+        return [Text(f"Unknown: benchmark {sub}", style="red")]
+
+    def _bench_create(self, args: list[str]) -> list[Any]:
+        from services.benchmark_service import create_task_set
+
+        p = _silent_parser("benchmark create")
+        p.add_argument("name")
+        p.add_argument("--description", "-d", default=None)
+        try:
+            ns = p.parse_args(args)
+        except SystemExit:
+            return [Text("Usage: benchmark create <name> [--description D]", style="yellow")]
+        try:
+            ts = create_task_set(self.state.session, ns.name, ns.description)
+        except Exception as exc:
+            return [Text(f"Error: {exc}", style="bold red")]
+        return [Text(f"✓  Created task set '{ns.name}' (id: {ts.id[:8]}…)", style="green")]
+
+    def _bench_add_task(self, args: list[str]) -> list[Any]:
+        from core.benchmark import GRADERS
+        from services.benchmark_service import get_task_set_by_name, add_task
+
+        p = _silent_parser("benchmark add-task")
+        p.add_argument("task_set")
+        p.add_argument("prompt", nargs="+")
+        p.add_argument("--expected", "-e", default=None)
+        p.add_argument("--grader", "-g", default="contains")
+        p.add_argument("--task", "-t", dest="task_type", default="simple")
+        try:
+            ns = p.parse_args(args)
+        except SystemExit:
+            return [Text("Usage: benchmark add-task <set> <prompt> --expected E [--grader exact|contains|json_valid]", style="yellow")]
+        if ns.grader not in GRADERS:
+            return [Text(f"grader must be one of {GRADERS}", style="yellow")]
+        if ns.grader in ("exact", "contains") and not ns.expected:
+            return [Text(f"grader '{ns.grader}' needs --expected; only json_valid runs without it.", style="yellow")]
+        ts = get_task_set_by_name(self.state.session, ns.task_set)
+        if not ts:
+            return [Text(f"Task set '{ns.task_set}' not found. Create it with `benchmark create`.", style="red")]
+        try:
+            add_task(self.state.session, ts.id, " ".join(ns.prompt), ns.expected, ns.grader, ns.task_type)
+        except Exception as exc:
+            return [Text(f"Error: {exc}", style="bold red")]
+        return [Text(f"✓  Added task to '{ns.task_set}'.", style="green")]
+
+    def _bench_run(self, args: list[str]) -> list[Any]:
+        import time
+        from services.benchmark_service import get_task_set_by_name, run_benchmark, list_scorecards
+        from db.repositories.models import list_enabled
+        from db.repositories.accounts import get_by_id as get_account
+        from providers.source import get_model_source
+        from utils.crypto import decrypt
+
+        p = _silent_parser("benchmark run")
+        p.add_argument("task_set")
+        p.add_argument("--models", "-m", default="")
+        try:
+            ns = p.parse_args(args)
+        except SystemExit:
+            return [Text("Usage: benchmark run <set> [--models m1,m2]", style="yellow")]
+
+        session = self.state.session
+        ts = get_task_set_by_name(session, ns.task_set)
+        if not ts:
+            return [Text(f"Task set '{ns.task_set}' not found.", style="red")]
+        wanted = {x.strip() for x in ns.models.split(",") if x.strip()}
+        selected = [m for m in list_enabled(session) if (not wanted or m.external_model_id in wanted)]
+        if not selected:
+            return [Text("No matching enabled models. Connect a provider or source first.", style="yellow")]
+
+        def generate_fn(model, prompt):
+            account = get_account(session, model.account_id) if model.account_id else None
+            api_key = decrypt(account.encrypted_token) if (account and account.encrypted_token) else ""
+            source = get_model_source(
+                model.provider,
+                source_type=(account.source_type if account else None) or "cloud",
+                base_url=(account.base_url if account else None),
+            )
+            t0 = time.monotonic()
+            res = source.generate(prompt, model.external_model_id, api_key)
+            latency = res.latency_ms if res.latency_ms is not None else int((time.monotonic() - t0) * 1000)
+            cost = (
+                (model.cost_per_1m_input or 0.0) * (res.input_tokens or 0)
+                + (model.cost_per_1m_output or 0.0) * (res.output_tokens or 0)
+            ) / 1_000_000
+            return res.response_text, latency, cost
+
+        try:
+            run_benchmark(session, ts, selected, generate_fn)
+            cards = list_scorecards(session, ts.id)
+        except Exception as exc:
+            return [Text(f"Benchmark run failed: {exc}", style="bold red")]
+        return [self._scorecard_table(f"Scorecards: {ns.task_set}", cards)]
+
+    def _bench_scorecards(self, args: list[str]) -> list[Any]:
+        from services.benchmark_service import get_task_set_by_name, list_scorecards
+
+        p = _silent_parser("benchmark scorecards")
+        p.add_argument("--task-set", "-s", dest="task_set", default=None)
+        try:
+            ns = p.parse_args(args)
+        except SystemExit:
+            return [Text("Usage: benchmark scorecards [--task-set S]", style="yellow")]
+        ts_id = None
+        if ns.task_set:
+            ts = get_task_set_by_name(self.state.session, ns.task_set)
+            if not ts:
+                return [Text(f"Task set '{ns.task_set}' not found.", style="red")]
+            ts_id = ts.id
+        cards = list_scorecards(self.state.session, ts_id)
+        if not cards:
+            return [Text("No scorecards yet. Run: benchmark run <task-set>", style="yellow")]
+        return [self._scorecard_table("Scorecards", cards)]
+
+    @staticmethod
+    def _scorecard_table(title: str, cards) -> Table:
+        table = Table(title=title, border_style="cyan")
+        table.add_column("Provider")
+        table.add_column("Model")
+        table.add_column("Score", justify="right")
+        table.add_column("Passed", justify="right")
+        table.add_column("Avg latency", justify="right")
+        table.add_column("Avg cost", justify="right")
+        for c in cards:
+            table.add_row(
+                c.provider, c.model_id, f"{c.score:.0%}",
+                f"{c.tasks_passed}/{c.tasks_total}",
+                f"{(c.avg_latency_ms or 0):.0f}ms", f"${(c.avg_cost_usd or 0):.6f}",
+            )
+        return table
 
     def _cmd_quality(self, args: list[str]) -> list[Any]:
         valid = {"cheap", "balanced", "best"}

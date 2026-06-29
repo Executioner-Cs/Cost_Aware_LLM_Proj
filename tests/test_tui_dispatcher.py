@@ -152,3 +152,89 @@ def test_route_no_models_returns_error(tmp_state):
     result = d.dispatch('route "hello world"')
     # Should return error text (no models in DB)
     assert any(isinstance(r, Text) for r in result)
+
+
+# ── Workbench: help, benchmarks, scorecard routing ───────────────────────────
+
+def test_help_mentions_workbench_commands(tmp_state):
+    state, session, home = tmp_state
+    d = Dispatcher(state)
+    help_text = d.dispatch("help")[0].renderable
+    assert "Benchmarks" in help_text and "benchmark run" in help_text
+    assert "--policy" in help_text
+    assert "exact-match response cache" in help_text  # stale "semantic cache" line fixed
+
+
+def test_route_policy_flag_parses(tmp_state):
+    state, session, home = tmp_state
+    d = Dispatcher(state)
+    from rich.text import Text
+    # No models, so it errors after parsing; the point is the flags parse (no usage text).
+    result = d.dispatch('route "hi" --policy benchmarked --task-set qa')
+    assert any(isinstance(r, Text) for r in result)
+    assert all("Usage:" not in r.plain for r in result if isinstance(r, Text))
+
+
+def test_benchmark_create_then_scorecards_empty(tmp_state):
+    state, session, home = tmp_state
+    d = Dispatcher(state)
+    from rich.text import Text
+    created = d.dispatch("benchmark create qa")
+    assert isinstance(created[0], Text) and "Created" in created[0].plain
+    empty = d.dispatch("benchmark scorecards --task-set qa")
+    assert isinstance(empty[0], Text) and "No scorecards" in empty[0].plain
+
+
+def test_benchmark_add_task_requires_expected(tmp_state):
+    state, session, home = tmp_state
+    d = Dispatcher(state)
+    from rich.text import Text
+    d.dispatch("benchmark create qa")
+    result = d.dispatch('benchmark add-task qa "2+2?" --grader exact')
+    assert isinstance(result[0], Text) and "needs --expected" in result[0].plain
+
+
+def test_benchmark_run_no_models(tmp_state):
+    state, session, home = tmp_state
+    d = Dispatcher(state)
+    from rich.text import Text
+    d.dispatch("benchmark create qa")
+    d.dispatch('benchmark add-task qa "2+2?" --expected 4 --grader exact')
+    result = d.dispatch("benchmark run qa")
+    assert isinstance(result[0], Text) and "No matching enabled models" in result[0].plain
+
+
+def test_benchmark_run_full_flow(tmp_state, monkeypatch):
+    from datetime import datetime, timezone
+    from providers.base import GenerateResult
+    from rich.table import Table
+
+    state, session, home = tmp_state
+    session.add(ConnectedAccount(
+        id="acc", provider="openai", display_name="t", auth_method="pat",
+        encrypted_token="fake", status="active",
+        connected_at=datetime.now(timezone.utc).isoformat(),
+    ))
+    session.add(ModelRegistry(
+        id="m", account_id="acc", provider="openai", external_model_id="gpt-4o-mini",
+        display_name="x", tier="small", context_window=128_000,
+        cost_per_1m_input=0.1, cost_per_1m_output=0.2,
+        supports_json=1, supports_tools=1, supports_vision=0, enabled=1,
+        discovered_at=datetime.now(timezone.utc).isoformat(),
+    ))
+    session.commit()
+
+    monkeypatch.setattr("utils.crypto.decrypt", lambda t: "k")
+    monkeypatch.setattr(
+        "providers.source.ModelSource.generate",
+        lambda self, prompt, model_id, api_key, **kw: GenerateResult(
+            response_text="4", input_tokens=3, output_tokens=1,
+            latency_ms=10, model_id=model_id, provider="openai",
+        ),
+    )
+
+    d = Dispatcher(state)
+    d.dispatch("benchmark create qa")
+    d.dispatch('benchmark add-task qa "2+2?" --expected 4 --grader exact')
+    result = d.dispatch("benchmark run qa")
+    assert isinstance(result[0], Table)  # scorecards rendered, no crash

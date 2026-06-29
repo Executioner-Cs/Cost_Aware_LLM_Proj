@@ -27,9 +27,9 @@ This README separates what works today from what is planned. Planned items are l
 
 * A local-first AI routing and benchmarking workbench.
 * A developer command-line and terminal tool (`orchestrator`).
-* A producer of local, task-specific scorecards (planned, see [Core concepts](#core-concepts)).
-* A model source registry (today: cloud providers; the source abstraction is planned).
-* A policy-based router that explains its decisions (basic cost-and-capability routing today; the policy engine is planned).
+* A producer of local, task-specific scorecards (implemented: `orchestrator benchmark`).
+* A model source registry: cloud providers, local Ollama, and OpenAI-compatible endpoints behind one source abstraction.
+* A policy-based router that explains its decisions (named policies with scoring and a fallback chain, including opt-in scorecard-aware routing).
 * A trace and explanation surface for every route.
 
 ## What this is not
@@ -52,12 +52,12 @@ The honest way to choose is to run a representative set of your own tasks across
 These are the domain concepts the product is organized around. Concepts marked planned are not yet implemented; they define the direction (see [docs/architecture/ORCHESTRATOR_V2_ARCHITECTURE.md](docs/architecture/ORCHESTRATOR_V2_ARCHITECTURE.md)).
 
 * Model Sources: a registered source of models, local, cloud, OpenAI-compatible, or custom. The abstraction exists today and cloud providers, Ollama, and OpenAI-compatible endpoints are supported. Source-as-primary-identity (replacing provider plus account) is still planned.
-* Task Sets (planned): your representative tasks with expected outputs or graders.
-* Benchmark Runs (planned): an execution of a Task Set across selected models, producing measurements.
-* Scorecards (planned): per-model, per-task local results that feed routing.
-* Routing Policies (planned): hard filters plus a scoring formula plus a fallback chain.
-* Routing Decisions: the chosen model plus the reasons it was chosen (basic reasons exist today; richer explanations are planned).
-* Fallback Plans (planned): the ordered alternatives if the primary model fails.
+* Task Sets: your representative tasks with expected outputs and a deterministic grader (`orchestrator benchmark create` / `add-task`).
+* Benchmark Runs: an execution of a Task Set across selected models, producing measurements (`orchestrator benchmark run`).
+* Scorecards: per-model local results (pass rate, average latency and cost) that can feed routing (`orchestrator benchmark scorecards`). Grading is deterministic only (exact / contains / json_valid); no LLM-as-judge.
+* Routing Policies: hard filters plus a scoring formula plus a fallback chain (`default`/`cheapest`, `privacy-first`, `quality-first`, `benchmarked`).
+* Routing Decisions: the chosen model plus the reasons it was chosen. Explicit policies emit a human-readable explanation; the default route is unchanged.
+* Fallback Plans: the ordered alternatives if the primary model is filtered out, carried on each routing decision.
 * Execution Traces: a record of each route. Today traces are flat rows with cost, tokens, latency, and cache status; richer execution traces are planned.
 
 ## Current capabilities
@@ -67,18 +67,21 @@ Implemented and working today:
 * Multi-provider routing across Anthropic, OpenAI, Groq, and Gemini. The router picks the cheapest model that satisfies the task's tier and capability constraints (not the cheapest model overall).
 * Dynamic model discovery: on `connect`, the provider's models API is queried for the models your key can access, rather than a hardcoded list.
 * Local and OpenAI-compatible sources: connect Ollama (`orchestrator connect ollama --base-url http://localhost:11434`) or any OpenAI-compatible endpoint (`orchestrator connect openai-compatible --base-url <url> --api-key <key>`); their models join the same routing pool over httpx, with no extra dependencies.
+* Benchmarks and scorecards: define your own task sets and score models on them locally (`orchestrator benchmark create | add-task | run | scorecards`). Deterministic grading only (exact / contains / json_valid); results persist to local SQLite.
+* Routing policy engine: named policies with hard filters, a scoring formula, and a fallback chain, with a human-readable explanation per decision. Opt-in scorecard-aware routing (`route --policy benchmarked [--task-set S]`) prefers models that earned it on your tasks, falling back to cheapest when a model has no scorecard. The default route is unchanged.
 * Encrypted credentials: API keys are Fernet-encrypted before they are written to SQLite.
-* A Typer CLI and a full-screen Textual TUI that run the same workflows.
+* A Typer CLI and a full-screen Textual TUI that run the same workflows, including the benchmark and policy commands.
 * Traces: every route records token counts, USD cost, latency, and cache hit or miss.
+* Slim default install: base routing, the exact-match cache, persistence, and the CLI pull no ML, vector, provider-SDK, or TUI packages; those are optional extras loaded lazily. See [Installation](#installation).
 * Exact-match SQLite cache by default (no ML dependencies). The legacy semantic cache was removed; a lighter one is planned. See [Cache status](#cache-status).
 * An experimental tool-using agent runtime. See [Security status](#security-status) before using it.
 
 Current limitations:
 
 * Sources: four cloud providers (Anthropic, OpenAI, Groq, Gemini), plus local Ollama and OpenAI-compatible HTTP endpoints. No hosted-gateway or custom-plugin sources yet.
-* No benchmark, task set, or scorecard system yet. Routing is cost-and-capability based, not scorecard-driven, today.
-* No routing policy engine yet (no configurable hard-filter-plus-scoring policies).
-* Base install pulls heavy dependencies today even though the default route path does not use them. See [Installation](#installation).
+* Benchmark grading is deterministic only (exact / contains / json_valid); there is no LLM-as-judge.
+* Scorecard-aware routing is opt-in (the `benchmarked` policy); the default route remains cost-and-capability based.
+* Model identity is `(provider, external_model_id)`, so two local endpoints exposing the same model name can collide in the registry (one endpoint per local provider is supported today).
 * No hard budget enforcement (cost is reported and warned, not capped).
 
 ## Installation
@@ -125,7 +128,7 @@ Provider SDKs and the TUI load lazily, so a base install runs the CLI fine and a
 orchestrator init
 ```
 
-This creates `~/.orchestrator/` with a config file, a SQLite database, and the directory for the optional vector store. On an interactive terminal it offers a provider picker and then launches the TUI. On a non-interactive terminal it prints the manual next steps.
+This creates `~/.orchestrator/` with a config file and a SQLite database. On an interactive terminal it offers a provider picker and then launches the TUI. On a non-interactive terminal it prints the manual next steps.
 
 Connect at least one provider:
 
@@ -168,20 +171,24 @@ orchestrator shell                      # launch the full-screen TUI
 
 Run `orchestrator` with no arguments on an interactive terminal, or `orchestrator shell`. It is a full-screen Textual app with a status bar (provider count, cache state, quality mode, session cost), an output panel, a recent-activity panel, and a command input. The same commands work inside the TUI without the `orchestrator` prefix. The TUI shows real data, not placeholders.
 
-### Planned commands (not implemented yet)
-
-The following illustrate the intended V2 workflow. They do not exist today and will error if you try them. They are shown so the direction is clear.
+### Benchmarks and policy routing
 
 ```bash
-# Planned: define and run a benchmark over your own tasks
+# Define a task set and add graded tasks
 orchestrator benchmark create my-tasks
-orchestrator benchmark run my-tasks --models gpt-4o-mini,llama3,claude-haiku
+orchestrator benchmark add-task my-tasks "2+2?" --expected 4 --grader exact
+orchestrator benchmark add-task my-tasks "Capital of France?" --expected paris --grader contains
 
-# Planned: route under a named policy that uses local scorecards
+# Run it across selected models (or all enabled) and view scorecards
+orchestrator benchmark run my-tasks --models gpt-4o-mini,llama3
+orchestrator benchmark scorecards --task-set my-tasks
+
+# Route under a named policy; the benchmarked policy uses your scorecards
 orchestrator route "..." --policy privacy-first
+orchestrator route "..." --policy benchmarked --task-set my-tasks
 ```
 
-See [docs/roadmap/BRANCH_ROADMAP.md](docs/roadmap/BRANCH_ROADMAP.md) for when each lands.
+Grading is deterministic (`exact`, `contains`, `json_valid`); `contains`/`exact` require `--expected`. The `benchmarked` policy prefers the highest-scoring capable model and falls back to cheapest when a model has no scorecard. See [docs/roadmap/BRANCH_ROADMAP.md](docs/roadmap/BRANCH_ROADMAP.md) for what is still planned.
 
 ## Cache status
 
@@ -221,7 +228,7 @@ API keys are encrypted at rest with Fernet and are never printed. Treat tool out
 
 ## Future direction (V2 roadmap)
 
-The product is moving from a cost-aware router to a benchmark-driven routing workbench. Work is sequenced one concern per branch. Summary order (full detail in [docs/roadmap/BRANCH_ROADMAP.md](docs/roadmap/BRANCH_ROADMAP.md)):
+The product is moving from a cost-aware router to a benchmark-driven routing workbench. Work is sequenced one concern per branch. As of 0.2, items 6 through 10 (Model Sources, local/OpenAI-compatible sources, the policy engine, benchmarks and scorecards, and the TUI workbench), the P0 agent-safety hardening (item 2), and scorecard-aware routing have landed; see [CHANGELOG.md](CHANGELOG.md). Item 11 (`semantic-cache-v2`) is deferred. Summary order (full detail in [docs/roadmap/BRANCH_ROADMAP.md](docs/roadmap/BRANCH_ROADMAP.md)):
 
 1. `refactor/slim-deps-and-cache-tiers`: slim default dependencies; exact cache default; semantic optional. (Cache tier code and the optional-dependency extras have landed.)
 2. `security/p0-agent-safety`: fix P0 agent-runtime security before any promotion of agent mode.

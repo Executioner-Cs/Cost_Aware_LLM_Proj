@@ -9,7 +9,7 @@ Layering, intended direction `cli -> services -> core -> providers/db/embeddings
 * `cli/`: Typer commands (`cli/commands/`) and a Textual TUI (`cli/tui/`) running the same workflows.
 * `services/`: init, connect, account, model, routing, trace orchestration.
 * `core/`: `router.py` pipeline, `classifier.py`, `model_selector.py`, `cache.py` (backend selector: exact or off), `cost_estimator.py`, `llm_turn.py` (agent turn, no cache), `reasons.py`. The legacy `semantic_cache.py` was removed.
-* `providers/`: connector plus adapter pairs for Anthropic, OpenAI, Groq, Gemini behind ABCs in `providers/base.py`.
+* `providers/`: connector plus adapter pairs for Anthropic, OpenAI, Groq, Gemini behind ABCs in `providers/base.py`. `providers/source.py` wraps each provider as a `ModelSource`; the routing generate path goes through it. See "ModelSource abstraction".
 * `db/`: SQLAlchemy models and repositories over SQLite. Tables: `connected_accounts`, `model_registry`, `traces`, `exact_cache`, `tool_calls`, and `cache_entries` (legacy semantic table, kept to preserve schema and old data; no longer written). No migration system.
 * The `embeddings/` package and Qdrant vector store were removed with the legacy semantic cache.
 * `agent/`: experimental ReAct loop, path-confined tools, optional shell off by default.
@@ -27,6 +27,7 @@ The unit of the system shifts from "provider plus API key" to ModelSource, and r
 Target concepts (none are DB models yet):
 
 * ModelSource: a registered source of models. Types: local (for example Ollama), cloud (today's providers), OpenAI-compatible gateway, custom. Identity is the source, not a raw key. Existing providers become one source type.
+  * ModelSource abstraction (status): the seam has landed in `providers/source.py`, wrapping the four cloud providers behind `ModelSource` (source identity is the provider name for now, `source_type = "cloud"`). `list_models` and `generate` delegate to the existing connector/adapter; the routing generate path calls `get_model_source(provider).generate(...)`. No new source types, no DB model, and user-facing commands stay provider/account based. Local / OpenAI-compatible / gateway sources and source-as-identity come in later branches.
 * RoutingPolicy: a named policy of hard filters, a scoring formula, and a fallback chain.
 * TaskSet: a developer's representative tasks with expected outputs or graders.
 * BenchmarkRun: an execution of a TaskSet across selected models producing measurements.

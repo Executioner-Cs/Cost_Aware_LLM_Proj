@@ -403,25 +403,21 @@ class Dispatcher:
 
     def _cmd_cache(self, args: list[str]) -> list[Any]:
         if not args:
-            return [Text("Usage: cache stats | inspect <id> | clear | threshold <val>", style="yellow")]
+            return [Text("Usage: cache stats | inspect <id> | clear", style="yellow")]
 
         sub = args[0].lower()
-        home = self.state.home
-        threshold = self.state.config.get("cache", {}).get("similarity_threshold", 0.92)
+        from core.cache import get_cache, MissingFeatureError
 
-        def _get_cache():
-            from core.semantic_cache import SemanticCache
-            return SemanticCache(
-                qdrant_path=home / "qdrant",
-                sqlite_session=self.state.session,
-                similarity_threshold=threshold,
-            )
+        def _open_cache():
+            return get_cache(self.state.config, self.state.session, self.state.home)
 
         if sub == "stats":
             try:
-                c = _get_cache()
+                c = _open_cache()
                 stats = c.stats()
                 c.close()
+            except MissingFeatureError as exc:
+                return [Text(str(exc), style="yellow")]
             except Exception as exc:
                 return [Text(f"Cache unavailable: {exc}", style="red")]
             grid = Table.grid(padding=(0, 2))
@@ -429,7 +425,6 @@ class Dispatcher:
             grid.add_column()
             grid.add_row("Total entries", str(stats["total_entries"]))
             grid.add_row("Total hits", str(stats["total_hits"]))
-            grid.add_row("Threshold", str(threshold))
             renderables: list[Any] = [Panel(grid, title="Cache Statistics", border_style="cyan")]
             if stats["top_entries"]:
                 table = Table(title="Top Entries", border_style="dim")
@@ -469,30 +464,14 @@ class Dispatcher:
                 idx = args.index("--task-type")
                 task_type = args[idx + 1] if idx + 1 < len(args) else None
             try:
-                c = _get_cache()
+                c = _open_cache()
                 deleted = c.clear(task_type=task_type)
                 c.close()
+            except MissingFeatureError as exc:
+                return [Text(str(exc), style="yellow")]
             except Exception as exc:
                 return [Text(f"Error: {exc}", style="bold red")]
             return [Text(f"✓  Deleted {deleted} cache entries.", style="green")]
-
-        elif sub == "threshold":
-            if len(args) < 2:
-                return [Text("Usage: cache threshold <0.0–1.0>", style="yellow")]
-            try:
-                val = float(args[1])
-                assert 0.0 < val < 1.0
-            except (ValueError, AssertionError):
-                return [Text("Threshold must be a float between 0 and 1.", style="red")]
-            import re
-            config_path = home / "config.toml"
-            if config_path.exists():
-                text = config_path.read_text()
-                updated = re.sub(r"(similarity_threshold\s*=\s*)[0-9.]+", rf"\g<1>{val}", text)
-                config_path.write_text(updated)
-            # Also update live config
-            self.state.config.setdefault("cache", {})["similarity_threshold"] = val
-            return [Text(f"✓  Similarity threshold set to {val}", style="green")]
 
         return [Text(f"Unknown: cache {sub}", style="red")]
 

@@ -10,11 +10,11 @@ The order below is the agreed sequence. A branch should not start work that belo
 
 What it does: makes the default route path slim. Exact-match SQLite cache is the default and pulls no ML or vector dependencies. The semantic cache becomes opt-in with lazy heavy imports. Adds optional install extras so `torch`, `sentence-transformers`, and `qdrant-client` are not required for base routing.
 
-Status note: the cache tier code (`core/cache.py`, router wiring, exact default, lazy semantic imports) has already landed on this concern. The remaining work is packaging: define and verify the optional extras in `pyproject.toml`, and make the install story match the code.
+Status note: the cache tier code (`core/cache.py`, router wiring, exact default, lazy semantic imports) and the optional-dependency extras have landed. The optional semantic backend this branch introduced was subsequently removed in `cache/remove-legacy-heavy-semantic-cache`; see branch 11.
 
 Out of scope: routing behavior, model selection, provider adapters, schema changes.
 
-Definition of done: `orchestrator route` on a fresh base install imports no ML or vector packages. Optional extras install cleanly and the semantic mode works when they are present. Tests cover exact cache hit, miss, and TTL on read.
+Definition of done: `orchestrator route` on a fresh base install imports no ML or vector packages. Optional extras install cleanly. Tests cover exact cache hit, miss, and TTL on read.
 
 ## 2. security/p0-agent-safety
 
@@ -90,11 +90,11 @@ Definition of done: the TUI reflects the real workflow, marks unimplemented area
 
 ## 11. cache/semantic-cache-v2
 
-What it does: hardens and improves the optional semantic cache: TTL on lookup, long-prompt safety, store-drift handling between SQLite and Qdrant.
+What it does: builds a lighter semantic cache to replace the legacy v1 that was removed in `cache/remove-legacy-heavy-semantic-cache`. Candidates: sqlite-vec, provider embeddings, or FastEmbed. No `sentence-transformers` or Qdrant.
 
-Out of scope: making semantic the default. It stays optional.
+Out of scope: making semantic the default (it stays optional), and re-adding the heavy v1 stack.
 
-Definition of done: semantic TTL is enforced or explicitly documented as not, long-prompt unsafe hits are prevented, and SQLite-Qdrant drift is handled or surfaced.
+Definition of done: a lighter semantic cache exists behind `cache.mode = "semantic"`, stays optional, keeps the base install slim, and does not reuse the removed heavy dependencies.
 
 ## 12. agent/safe-agent-mode
 

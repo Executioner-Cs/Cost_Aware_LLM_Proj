@@ -58,7 +58,7 @@ Current, implemented today:
 * Dynamic model discovery on connect, with encrypted credential storage.
 * A Typer CLI and a Textual TUI that share the same workflows.
 * Traces with token counts, USD cost, latency, and cache hit or miss.
-* Tiered cache: exact-match SQLite cache by default (no ML dependencies), optional semantic cache.
+* Exact-match SQLite cache by default (no ML dependencies). The legacy heavy semantic cache was removed; a lighter one is planned.
 * An experimental ReAct agent runtime (see caveat below).
 
 Planned, not yet built:
@@ -79,4 +79,4 @@ Agent mode is experimental. The sandbox is path-confinement only, not OS-level i
 
 ## Cache caveat
 
-The default cache is exact-match and pulls no embedding or vector dependencies. The semantic cache is optional and opt-in. Cache correctness beats hit rate: a cache must never serve a different question's answer. Do not market the semantic cache as the product.
+The default and only implemented cache is exact-match and pulls no embedding or vector dependencies. The legacy heavy semantic cache (local embeddings plus Qdrant) was removed because it was too heavy for the base product and was not the differentiator; `cache.mode = "semantic"` now returns a clear error directing the user to exact mode. A lighter semantic cache is planned as future work (semantic-cache-v2, using a lighter approach such as sqlite-vec, provider embeddings, or FastEmbed). Cache correctness beats hit rate: a cache must never serve a different question's answer. Do not market the cache as the product.

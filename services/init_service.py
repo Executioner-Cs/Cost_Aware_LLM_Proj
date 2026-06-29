@@ -1,6 +1,7 @@
 """
-orchestrator init — sets up ~/.orchestrator directory, SQLite tables,
-Qdrant collection, and warms up the embedding model.
+orchestrator init: sets up the ~/.orchestrator directory, config, and SQLite
+tables. The default exact cache needs no vector store or embedding model, so
+init no longer provisions Qdrant or warms an embedder.
 """
 from __future__ import annotations
 
@@ -28,14 +29,10 @@ fallback_enabled = true
 
 [cache]
 enabled = true
-# mode: "exact" (default, no extra deps) | "semantic" (needs cache/heavy-cache extra) | "off"
+# mode: "exact" (default, no extra deps) | "off"
+# Semantic cache v1 was removed; a lighter semantic cache returns in semantic-cache-v2.
 mode = "exact"
 ttl_seconds = 86400
-# --- semantic mode only (ignored when mode = "exact") ---
-similarity_threshold = 0.92
-task_thresholds.json_extract = 0.95
-task_thresholds.reasoning = 0.93
-embedding_model = "all-MiniLM-L6-v2"
 
 [cost]
 warn_above_usd = 0.01
@@ -81,24 +78,12 @@ def run_init(home: Path | None = None) -> None:
             config_path.write_text(DEFAULT_CONFIG)
         progress.update(t, completed=True)
 
-        # 2. Create SQLite tables
+        # 2. Create SQLite tables. The default exact cache provisions its own
+        #    table lazily on first use and needs no vector store or embedder.
         progress.update(t, description="Creating SQLite tables…")
         db_path = home / "orchestrator.db"
         create_all_tables(db_path)
         progress.update(t, completed=True)
-
-        # 3. Cache backend setup — only for semantic mode. The default exact
-        #    cache needs no vector store and no embedding model, so a base
-        #    install never touches Qdrant or sentence-transformers here.
-        mode = load_config(home).get("cache", {}).get("mode", "exact")
-        if mode == "semantic":
-            progress.update(t, description="Initialising Qdrant vector store…")
-            _ensure_qdrant_collection(home / "qdrant")
-            progress.update(t, completed=True)
-
-            progress.update(t, description="Warming up embedding model (first run downloads ~22 MB)…")
-            _warmup_embedder()
-            progress.update(t, completed=True)
 
     print_success(f"Orchestrator initialised at [bold]{home}[/bold]")
     render_init_success_panel(home)
@@ -205,26 +190,6 @@ def _print_fallback_connect_commands(reason: str) -> None:
         console.print(f"[cyan]- orchestrator connect {provider}[/cyan]")
     console.print("[cyan]- orchestrator model list[/cyan]")
     console.print('[cyan]- orchestrator route "Summarize this text"[/cyan]')
-
-
-def _ensure_qdrant_collection(qdrant_path: Path) -> None:
-    from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams
-
-    qdrant_path.mkdir(parents=True, exist_ok=True)
-    client = QdrantClient(path=str(qdrant_path))
-    collections = {c.name for c in client.get_collections().collections}
-    if "semantic_cache" not in collections:
-        client.create_collection(
-            collection_name="semantic_cache",
-            vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-        )
-    client.close()
-
-
-def _warmup_embedder() -> None:
-    from embeddings.embedder import embed
-    embed("warmup")
 
 
 def load_config(home: Path | None = None) -> dict:

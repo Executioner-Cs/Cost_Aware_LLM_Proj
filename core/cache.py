@@ -6,15 +6,16 @@ keyed by ``sha256(normalized_prompt + task_type + quality)``. It needs no
 embedding model and no vector store, so importing or using it never pulls
 sentence-transformers, torch, or qdrant-client.
 
-The semantic cache (similarity search over embeddings) is opt-in. It is built
-only when ``[cache] mode = "semantic"`` and its heavy dependencies are loaded
-lazily, inside :class:`SemanticCacheBackend`, never at module import time.
+The legacy semantic cache (similarity search over embeddings + Qdrant) was
+removed: it was too heavy for the base product and was not the differentiator.
+``mode = "semantic"`` now raises a clear error pointing back to exact mode. A
+lighter semantic cache is planned as future work (semantic-cache-v2).
 
 ``get_cache(config, session, home)`` is the single entry point:
   - ``enabled = false``           -> :class:`NoOpCache`
   - ``mode = "off"``              -> :class:`NoOpCache`
   - ``mode = "exact"`` (default)  -> :class:`ExactCache`
-  - ``mode = "semantic"``         -> :class:`SemanticCacheBackend` (lazy heavy imports)
+  - ``mode = "semantic"``         -> raises (removed; use exact)
 """
 from __future__ import annotations
 
@@ -225,84 +226,13 @@ class ExactCache(BaseCache):
         return count
 
 
-class SemanticCacheBackend(BaseCache):
-    """Adapter over the existing similarity-search cache.
-
-    All heavy imports (qdrant-client via SemanticCache.__init__, and
-    sentence-transformers via embeddings) happen here and only here, so the
-    default exact/off path stays free of the ML/vector stack. Behavior of the
-    underlying SemanticCache is unchanged; this only owns prompt embedding so
-    the cache interface can be prompt-keyed like ExactCache.
-    """
-
-    def __init__(
-        self,
-        session: Session,
-        home: Path,
-        similarity_threshold: float = 0.92,
-        task_thresholds: Optional[dict] = None,
-        ttl_seconds: Optional[int] = None,
-    ) -> None:
-        try:
-            from core.semantic_cache import SemanticCache  # lazy: pulls qdrant-client
-        except ModuleNotFoundError as exc:
-            raise MissingFeatureError(
-                "heavy-cache",
-                'Semantic cache requires the heavy-cache extra. Install with: '
-                'pip install "orchestrator-cli[heavy-cache]" or set cache.mode = "exact".',
-            ) from exc
-        self._inner = SemanticCache(
-            qdrant_path=home / "qdrant",
-            sqlite_session=session,
-            similarity_threshold=similarity_threshold,
-            task_thresholds=task_thresholds or {},
-        )
-        self._embed_cache: dict[str, list[float]] = {}
-
-    def _embed(self, prompt: str) -> list[float]:
-        if prompt not in self._embed_cache:
-            try:
-                from embeddings.embedder import embed  # lazy: pulls sentence-transformers/torch
-            except ModuleNotFoundError as exc:
-                raise MissingFeatureError(
-                    "heavy-cache",
-                    'Semantic cache requires the heavy-cache extra. Install with: '
-                    'pip install "orchestrator-cli[heavy-cache]" or set cache.mode = "exact".',
-                ) from exc
-            # Keep only the latest prompt's vector: one route embeds once.
-            self._embed_cache = {prompt: embed(prompt)}
-        return self._embed_cache[prompt]
-
-    def lookup(self, prompt: str, task_type: str, quality: str) -> Optional[CacheResult]:
-        return self._inner.lookup(self._embed(prompt), task_type, quality)
-
-    def store(self, prompt, task_type, quality, response_text, provider, model_id, input_tokens, output_tokens) -> None:
-        self._inner.store(
-            embedding=self._embed(prompt),
-            task_type=task_type,
-            quality=quality,
-            response_text=response_text,
-            provider=provider,
-            model_id=model_id,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-        )
-
-    def stats(self) -> dict:
-        return self._inner.stats()
-
-    def clear(self, task_type: Optional[str] = None, older_than_days: Optional[int] = None) -> int:
-        return self._inner.clear(task_type=task_type, older_than_days=older_than_days)
-
-    def get_entry(self, entry_id: str):
-        return self._inner.get_entry(entry_id)
-
-    def close(self) -> None:
-        self._inner.close()
-
-
 def get_cache(config: dict, session: Session, home: Path) -> BaseCache:
-    """Build the cache backend from config. Default mode is exact."""
+    """Build the cache backend from config. Default mode is exact.
+
+    The legacy semantic backend was removed; ``mode = "semantic"`` now raises a
+    clear error directing the user to exact mode. ``home`` is accepted for
+    backward-compatible call sites and is unused by the surviving backends.
+    """
     cache_cfg = config.get("cache", {}) if config else {}
     if not cache_cfg.get("enabled", True):
         return NoOpCache()
@@ -313,12 +243,10 @@ def get_cache(config: dict, session: Session, home: Path) -> BaseCache:
     if mode == "off":
         return NoOpCache()
     if mode == "semantic":
-        return SemanticCacheBackend(
-            session=session,
-            home=home,
-            similarity_threshold=cache_cfg.get("similarity_threshold", 0.92),
-            task_thresholds=cache_cfg.get("task_thresholds", {}),
-            ttl_seconds=ttl_seconds,
+        raise MissingFeatureError(
+            "semantic-cache-v2",
+            'Semantic cache v1 has been removed. Use cache.mode = "exact". '
+            'Lightweight semantic cache will return in semantic-cache-v2.',
         )
     # "exact" and any unknown value default to the safe exact cache.
     return ExactCache(session, ttl_seconds=ttl_seconds)

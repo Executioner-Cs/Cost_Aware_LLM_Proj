@@ -1,4 +1,4 @@
-"""orchestrator cache stats|inspect|clear|threshold"""
+"""orchestrator cache stats|inspect|clear"""
 import typer
 from typing import Annotated, Optional
 
@@ -43,9 +43,6 @@ def cache_stats():
     grid.add_row("Mode", mode)
     grid.add_row("Total entries", str(stats["total_entries"]))
     grid.add_row("Total hits", str(stats["total_hits"]))
-    if mode == "semantic":
-        threshold = config.get("cache", {}).get("similarity_threshold", 0.92)
-        grid.add_row("Similarity threshold", str(threshold))
 
     console.print(Panel(grid, title="Cache Statistics", border_style="cyan"))
 
@@ -133,32 +130,3 @@ def cache_clear(
     session.close()
 
     print_success(f"Deleted {deleted} cache entries.")
-
-
-@app.command("threshold")
-def cache_threshold(
-    value: float = typer.Argument(..., help="New similarity threshold (0.0–1.0)"),
-):
-    """Set the similarity threshold in config.toml."""
-    from services.init_service import get_home
-    from utils.console import print_success, print_error
-    import re
-
-    if not (0.0 < value < 1.0):
-        print_error("Threshold must be between 0 and 1 (exclusive).")
-        raise typer.Exit(1)
-
-    home = get_home()
-    config_path = home / "config.toml"
-    if not config_path.exists():
-        print_error("config.toml not found. Run `orchestrator init` first.")
-        raise typer.Exit(1)
-
-    text = config_path.read_text()
-    updated = re.sub(
-        r"(similarity_threshold\s*=\s*)[0-9.]+",
-        rf"\g<1>{value}",
-        text,
-    )
-    config_path.write_text(updated)
-    print_success(f"Similarity threshold set to {value}")

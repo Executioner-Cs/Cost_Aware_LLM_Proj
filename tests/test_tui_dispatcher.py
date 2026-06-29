@@ -137,10 +137,10 @@ def test_trace_list_empty(tmp_state):
     assert isinstance(result[0], Text)
 
 
-def test_cache_stats_no_qdrant(tmp_state):
-    state, session, home = tmp_path = tmp_state
+def test_cache_stats_exact(tmp_state):
+    state, session, home = tmp_state
     d = Dispatcher(state)
-    # Qdrant not initialised yet — should return error text, not crash
+    # Exact cache (default): stats render with no vector store, no crash.
     result = d.dispatch("cache stats")
     assert len(result) >= 1
 

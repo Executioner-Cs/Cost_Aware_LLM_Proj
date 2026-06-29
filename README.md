@@ -69,7 +69,7 @@ Implemented and working today:
 * Encrypted credentials: API keys are Fernet-encrypted before they are written to SQLite.
 * A Typer CLI and a full-screen Textual TUI that run the same workflows.
 * Traces: every route records token counts, USD cost, latency, and cache hit or miss.
-* Tiered cache: an exact-match SQLite cache by default (no ML dependencies), with an optional semantic cache. See [Cache status](#cache-status).
+* Exact-match SQLite cache by default (no ML dependencies). The legacy semantic cache was removed; a lighter one is planned. See [Cache status](#cache-status).
 * An experimental tool-using agent runtime. See [Security status](#security-status) before using it.
 
 Current limitations:
@@ -108,7 +108,6 @@ The base install is intentionally light. The default route path uses the exact-m
 | `gemini` | google-genai SDK | routing to Gemini models |
 | `providers` | all three provider SDKs | routing to any cloud provider |
 | `tui` | textual, questionary | the immersive TUI and the interactive provider picker |
-| `heavy-cache` | sentence-transformers, qdrant-client | the optional semantic cache (`cache.mode = "semantic"`) |
 | `all` | everything above | a full-featured install |
 
 ```bash
@@ -117,7 +116,7 @@ pip install -e ".[providers,tui]"    # cloud routing plus the TUI
 pip install -e ".[all]"              # everything optional
 ```
 
-Provider SDKs, the TUI, and the semantic-cache stack load lazily, so a base install runs the CLI fine and a missing extra produces a clear message naming the one to install. groq routing reuses the openai SDK, so it needs the `openai` extra (there is no separate groq extra).
+Provider SDKs and the TUI load lazily, so a base install runs the CLI fine and a missing extra produces a clear message naming the one to install. groq routing reuses the openai SDK, so it needs the `openai` extra (there is no separate groq extra).
 
 ## First-time setup
 
@@ -188,16 +187,17 @@ See [docs/roadmap/BRANCH_ROADMAP.md](docs/roadmap/BRANCH_ROADMAP.md) for when ea
 
 ## Cache status
 
-The cache is tiered and selected in `core/cache.py`:
+The cache is selected in `core/cache.py`:
 
-* Default is an exact-match SQLite cache. The key is a hash of the normalized prompt plus task type plus quality. It imports no embedding model and no vector store. An exact hit can only ever return the same question's answer at the same task and quality, so it cannot serve a different prompt's answer. TTL is enforced on read.
-* Optional is a semantic cache (local `all-MiniLM-L6-v2` embeddings plus an embedded Qdrant store), enabled with `[cache] mode = "semantic"` in `~/.orchestrator/config.toml`. Its heavy dependencies load lazily, only when semantic mode is actually used. A semantic hit requires all three of: similarity above threshold, exact task-type match, and exact quality match.
+* The only implemented cache is an exact-match SQLite cache (the default). The key is a hash of the normalized prompt plus task type plus quality. It imports no embedding model and no vector store. An exact hit can only ever return the same question's answer at the same task and quality, so it cannot serve a different prompt's answer. TTL is enforced on read.
+* `cache.mode = "off"` disables the cache.
+* `cache.mode = "semantic"` is no longer available. The legacy heavy semantic cache (local embeddings plus an embedded Qdrant store) was removed because it was too heavy for the base product and was not the differentiator. Setting it now returns a clear error directing you to exact mode.
 
 Current vs planned:
 
 * Exact cache as the default: implemented.
-* Semantic cache as an optional backend: implemented (lazy imports). The lightweight install extras for it are planned, not shipped.
-* Semantic TTL on lookup: not yet enforced (the semantic backend does not filter by age on read). The exact cache does enforce TTL on read.
+* Legacy semantic cache v1: removed, along with its `sentence-transformers` and `qdrant-client` dependencies.
+* A lighter semantic cache: planned as future work (`semantic-cache-v2`), using a lighter approach such as sqlite-vec, provider embeddings, or FastEmbed. Not implemented.
 
 Cache correctness matters more than cache cleverness. A cache must never serve a different question's answer.
 
@@ -226,18 +226,18 @@ The product is moving from a cost-aware router to a benchmark-driven routing wor
 8. `routing/policy-engine-v1`: hard filters, scoring, policies, fallback chains, explanations.
 9. `evals/benchmark-scorecards-v1`: Task Sets, Benchmark Runs, scoring, Scorecards that feed routing.
 10. `design/tui-v2-workbench-experience`: TUI around sources, benchmarks, scorecards, routing, traces.
-11. `cache/semantic-cache-v2`: harden the optional semantic cache.
+11. `cache/semantic-cache-v2`: a lighter semantic cache to replace the removed v1 (candidates: sqlite-vec, provider embeddings, FastEmbed). Not implemented.
 12. `agent/safe-agent-mode`: re-enable and promote agent mode only after P0 is fixed.
 
 ## Development
 
 ```bash
 # Install the test tools plus every optional extra, so the full suite
-# (provider adapters, TUI, semantic cache) can import what it exercises.
+# (provider adapters, TUI) can import what it exercises.
 pip install -e ".[all,dev]"
 pytest
 ```
 
-`[dev]` alone installs only the test tools (`pytest`, `pytest-asyncio`, `pytest-mock`); combine it with `[all]` to run the whole suite. The test suite covers the task classifier, cost estimator, model selector, cache (exact and semantic), router integration (with mocked providers), provider adapters, connect flows, optional-dependency packaging, and an end-to-end CLI simulation under `tests/tests_e2e_cli_simulation/`. There is no lint, format, or typecheck command in this repo.
+`[dev]` alone installs only the test tools (`pytest`, `pytest-asyncio`, `pytest-mock`); combine it with `[all]` to run the whole suite. The test suite covers the task classifier, cost estimator, model selector, exact cache, router integration (with mocked providers), provider adapters, connect flows, optional-dependency packaging, and an end-to-end CLI simulation under `tests/tests_e2e_cli_simulation/`. There is no lint, format, or typecheck command in this repo.
 
 Architecture, product direction, and the branch roadmap live under [docs/](docs/). The operating guide for Claude Code in this repo is at [.claude/CLAUDE.md](.claude/CLAUDE.md).

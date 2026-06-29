@@ -79,9 +79,11 @@ def test_no_tomllib_marker_in_base(pyproject):
 def test_optional_extras_exist(pyproject):
     extras = pyproject["project"]["optional-dependencies"]
     assert set(extras) == {
-        "tui", "openai", "anthropic", "gemini", "providers", "heavy-cache", "dev", "all",
+        "tui", "openai", "anthropic", "gemini", "providers", "dev", "all",
     }
-    # Deferred to later branches: no FastEmbed light-cache alias, no groq extra.
+    # Legacy heavy semantic cache removed: no heavy-cache extra. No FastEmbed
+    # light-cache alias, no groq extra.
+    assert "heavy-cache" not in extras
     assert "cache" not in extras
     assert "groq" not in extras
 
@@ -93,21 +95,31 @@ def test_extra_membership(pyproject):
     assert extras["anthropic"] == {"anthropic"}
     assert extras["gemini"] == {"google-genai"}
     assert extras["providers"] == {"openai", "anthropic", "google-genai"}
-    assert extras["heavy-cache"] == {"sentence-transformers", "qdrant-client"}
+    assert "heavy-cache" not in extras
     assert extras["all"] == {
         "textual", "questionary", "openai", "anthropic", "google-genai",
-        "sentence-transformers", "qdrant-client",
     }
 
 
 def test_no_unplanned_packages_anywhere(pyproject):
-    # Patch 2 explicitly does not add sqlite-vec or FastEmbed yet.
+    # Not added yet: sqlite-vec or FastEmbed (semantic-cache-v2 work).
     all_reqs = list(pyproject["project"]["dependencies"])
     for reqs in pyproject["project"]["optional-dependencies"].values():
         all_reqs.extend(reqs)
     names = {_req_name(r) for r in all_reqs}
     assert "sqlite-vec" not in names
     assert "fastembed" not in names
+
+
+def test_no_vector_or_ml_stack_anywhere(pyproject):
+    # Legacy heavy semantic cache removed: its vector/ML stack must not be a
+    # declared dependency in any group (base or extras).
+    all_reqs = list(pyproject["project"]["dependencies"])
+    for reqs in pyproject["project"]["optional-dependencies"].values():
+        all_reqs.extend(reqs)
+    names = {_req_name(r) for r in all_reqs}
+    for pkg in ("sentence-transformers", "qdrant-client", "torch", "transformers", "grpcio"):
+        assert pkg not in names, f"{pkg} must not be declared after semantic v1 removal"
 
 
 # --------------------------------------------------------------------------- #
@@ -165,26 +177,18 @@ def test_unrelated_import_error_is_not_masked(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Semantic mode without heavy-cache deps -> clean install hint
+# Semantic mode was removed -> clear error pointing back to exact
 # --------------------------------------------------------------------------- #
 
-def test_semantic_mode_missing_heavy_cache_gives_clean_error(monkeypatch, tmp_path):
+def test_semantic_mode_removed_gives_clean_error(tmp_path):
     from core.cache import get_cache, MissingFeatureError
 
-    monkeypatch.delitem(sys.modules, "core.semantic_cache", raising=False)
-    real_import = builtins.__import__
-
-    def fake_import(name, *args, **kwargs):
-        if name == "core.semantic_cache":
-            raise ModuleNotFoundError("No module named 'qdrant_client'", name="qdrant_client")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
     with pytest.raises(MissingFeatureError) as excinfo:
         get_cache({"cache": {"enabled": True, "mode": "semantic"}}, object(), tmp_path)
     message = str(excinfo.value)
-    assert "heavy-cache" in message
-    assert 'orchestrator-cli[heavy-cache]' in message
+    assert "Semantic cache v1 has been removed" in message
+    assert 'cache.mode = "exact"' in message
+    assert "semantic-cache-v2" in message
 
 
 # --------------------------------------------------------------------------- #

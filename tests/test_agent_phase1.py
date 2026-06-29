@@ -61,7 +61,7 @@ def test_tool_call_logged_when_session_provided():
 def test_run_python():
     with tempfile.TemporaryDirectory() as d:
         sb = Sandbox(root=Path(d))
-        out = execution.run_python(sb, "print(1+1)")
+        out = execution.run_python(sb, "print(1+1)", enabled=True)
         assert out["ok"] is True
         assert "2" in out["stdout"]
 

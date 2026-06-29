@@ -22,6 +22,9 @@ def load_agent_config(home: Path | None = None) -> dict:
         "max_file_bytes": int(raw.get("max_file_bytes", 1_048_576)),
         "max_subprocess_seconds": float(raw.get("max_subprocess_seconds", 120)),
         "allow_shell": bool(raw.get("allow_shell", False)),
+        "allow_python": bool(raw.get("allow_python", False)),
         "blocked_shell_patterns": _parse_blocked_patterns(raw.get("blocked_shell_patterns")),
+        # Advisory only: network access is NOT enforced for tool subprocesses.
+        # Do not present this as a hard isolation boundary.
         "network_disabled": bool(raw.get("network_disabled", True)),
     }

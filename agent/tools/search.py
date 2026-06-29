@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from agent.sandbox import Sandbox
+from agent.sandbox import Sandbox, is_sensitive_path
 from agent.tool_logging import run_logged
 
 _TEXT_SUFFIXES = {".py", ".toml", ".md", ".txt", ".json", ".yaml", ".yml", ".ini", ".cfg"}
@@ -53,8 +53,11 @@ def _search_ripgrep(sandbox: Sandbox, query: str, rg: str) -> dict[str, Any]:
         paths = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
         rel = []
         for p in paths[:_MAX_MATCHES]:
+            resolved = Path(p).resolve()
+            if is_sensitive_path(resolved):
+                continue  # never surface credential/secret files in search results
             try:
-                rel.append(str(Path(p).resolve().relative_to(sandbox.root)))
+                rel.append(str(resolved.relative_to(sandbox.root)))
             except ValueError:
                 continue
         return {
@@ -73,7 +76,7 @@ def _search_naive(sandbox: Sandbox, query: str) -> dict[str, Any]:
     scanned = 0
     try:
         for path in sandbox.root.rglob("*"):
-            if path.is_file() and path.suffix.lower() in _TEXT_SUFFIXES:
+            if path.is_file() and path.suffix.lower() in _TEXT_SUFFIXES and not is_sensitive_path(path):
                 scanned += 1
                 if scanned > _MAX_FILES_SCAN:
                     break

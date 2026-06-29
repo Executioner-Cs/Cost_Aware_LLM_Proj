@@ -124,9 +124,15 @@ def list_scorecards(session: Session, task_set_id: Optional[str] = None) -> list
 
 
 def scores_by_model(session: Session, task_set_id: Optional[str] = None) -> dict[str, float]:
-    """Best (max) scorecard score per ``external_model_id``, optionally scoped to
-    one task set. Returns ``{}`` when no scorecards exist. Feeds scorecard-aware
-    routing; models absent from the map simply have no benchmark signal."""
+    """Best (max) scorecard score per model id, optionally scoped to one task set.
+    Returns ``{}`` when no scorecards exist. Feeds scorecard-aware routing; models
+    absent from the map simply have no benchmark signal.
+
+    The key is ``Scorecard.model_id``, which ``run_benchmark`` writes from
+    ``ModelRegistry.external_model_id``. Routing joins on ``external_model_id``, so
+    the keys line up today. That identity is implicit (no FK); when ModelSource
+    identity lands and external ids stop being globally unique across sources, the
+    join must move to a source-qualified id."""
     ensure_tables(session)
     query = session.query(Scorecard)
     if task_set_id:

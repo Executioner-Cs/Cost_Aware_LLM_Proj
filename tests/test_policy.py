@@ -148,3 +148,23 @@ def test_benchmarked_policy_scored_beats_unscored_cheaper():
         policy=POLICIES["benchmarked"], scores={"good": 0.9},
     )
     assert decision.selected.external_model_id == "good"
+
+
+def test_benchmarked_cost_is_the_tiebreaker_near_threshold():
+    # With weight_scorecard=3.0 and weight_cost=0.5 over this cost spread, a pricey
+    # model needs roughly a 16% score to overcome the cheapest model's cost bonus.
+    # Pin both sides of that crossover so the balance is intentional, not accidental.
+    models = [_m("cheap", cost=0.1), _m("pricey", cost=5.0)]
+    poor = decide(models, "simple", "balanced", policy=POLICIES["benchmarked"], scores={"pricey": 0.16})
+    assert poor.selected.external_model_id == "cheap"
+    ok = decide(models, "simple", "balanced", policy=POLICIES["benchmarked"], scores={"pricey": 0.17})
+    assert ok.selected.external_model_id == "pricey"
+
+
+def test_benchmarked_zero_score_ranks_same_as_unscored():
+    # score=0.0 and absent-from-scores are indistinguishable in ranking (both add 0
+    # to the scorecard term), so the cheapest model wins in both cases.
+    models = [_m("cheap", cost=0.1), _m("other", cost=5.0)]
+    unscored = decide(models, "simple", "balanced", policy=POLICIES["benchmarked"], scores={})
+    zeroed = decide(models, "simple", "balanced", policy=POLICIES["benchmarked"], scores={"other": 0.0})
+    assert unscored.selected.external_model_id == zeroed.selected.external_model_id == "cheap"

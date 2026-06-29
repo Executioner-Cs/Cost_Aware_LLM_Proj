@@ -154,6 +154,17 @@ def test_scores_by_model_empty_when_no_scorecards(session):
     assert bench.scores_by_model(session) == {}
 
 
+def test_scores_by_model_cross_task_set_takes_max(session):
+    ts1 = bench.create_task_set(session, "ts1")
+    bench.add_task(session, ts1.id, "q", expected="a", grader="contains")
+    ts2 = bench.create_task_set(session, "ts2")
+    bench.add_task(session, ts2.id, "q", expected="a", grader="contains")
+    bench.run_benchmark(session, ts1, [_model("m")], lambda mo, p: ("a", 1.0, 0.0))  # 1.0
+    bench.run_benchmark(session, ts2, [_model("m")], lambda mo, p: ("z", 1.0, 0.0))  # 0.0
+    assert bench.scores_by_model(session)["m"] == 1.0          # best across all sets
+    assert bench.scores_by_model(session, ts2.id)["m"] == 0.0  # scoped to one set
+
+
 def test_ensure_tables_on_db_without_them(tmp_path):
     # A DB created before the benchmark tables existed must gain them lazily.
     from sqlalchemy import inspect as sa_inspect

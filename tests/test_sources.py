@@ -43,6 +43,46 @@ def test_get_model_source_builds_non_cloud():
     assert get_model_source("openai").source_type == "cloud"
 
 
+def test_get_model_source_unknown_source_type_raises():
+    # An unrecognized non-cloud source_type must fail loudly, not fall through to a
+    # connector lookup KeyError.
+    with pytest.raises(ValueError, match="Unknown source_type"):
+        get_model_source("x", source_type="weird", base_url="http://h")
+
+
+def test_connect_second_local_source_warns(monkeypatch, tmp_path):
+    from services import connect_service
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'w.db'}")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    warnings: list[str] = []
+    try:
+        monkeypatch.setattr(
+            "providers.source.ModelSource.list_models",
+            lambda self, api_key: [ModelInfo(
+                external_model_id="llama3", display_name="llama3", tier="balanced",
+                context_window=8192, cost_per_1m_input=0.0, cost_per_1m_output=0.0,
+            )],
+        )
+        monkeypatch.setattr("utils.console.print_warning", lambda msg: warnings.append(msg))
+        connect_service.connect(session, "ollama", "", base_url="http://a:11434")
+        assert warnings == []                                   # first local source: silent
+        connect_service.connect(session, "ollama", "", base_url="http://b:11434")
+        assert warnings and "already connected" in warnings[0]  # second collides: warned
+    finally:
+        session.close()
+
+
+def test_source_id_distinguishes_local_endpoints():
+    # Cloud sources are unique by provider name; local sources by endpoint.
+    assert get_model_source("openai").source_id == "openai"
+    a = get_model_source("ollama", source_type="ollama", base_url="http://a:11434")
+    b = get_model_source("ollama", source_type="ollama", base_url="http://b:11434")
+    assert a.source_id == "ollama:http://a:11434"
+    assert a.source_id != b.source_id
+
+
 def test_source_modules_are_httpx_only():
     # Fresh interpreter: importing the new sources must pull no SDK/ML/vector
     # libs (httpx is a base dependency). A subprocess avoids pollution from other

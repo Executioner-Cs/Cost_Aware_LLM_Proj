@@ -1,15 +1,14 @@
 """Model source abstraction.
 
-A ModelSource is anything that can expose models and execute model calls. Today
-every source is a cloud provider (OpenAI, Anthropic, Gemini, Groq); this module
-wraps the existing connectors and adapters behind one source-oriented interface
-so later branches can add local / OpenAI-compatible / gateway sources without
-changing the routing core.
+A ModelSource is anything that can expose models and execute model calls. Cloud
+providers (OpenAI, Anthropic, Gemini, Groq) wrap the existing connectors and
+adapters; local Ollama and OpenAI-compatible endpoints are per-base_url sources.
+This keeps the routing core unchanged while supporting non-cloud sources.
 
-This branch adds the abstraction and wraps the current providers only. No new
-source types are introduced, user-facing terminology stays provider/account
-based, and account/source unification remains future work. ``list_models`` and
-``generate`` delegate to the existing connector/adapter, preserving behavior.
+Account identity is aligned with source identity: an account's source_type and
+base_url select the source for both routing/benchmarking and account sync.
+``list_models`` and ``generate`` delegate to the existing connector/adapter for
+cloud, preserving behavior exactly.
 """
 from __future__ import annotations
 
@@ -62,11 +61,13 @@ def _load_class(dotted: str):
 
 @dataclass(frozen=True)
 class ModelSource:
-    """A source of models, wrapping one provider's connector and adapter.
+    """A source of models, wrapping one provider's connector or a local endpoint.
 
-    For now the source identity is the provider name and every source is a cloud
-    provider. ``list_models`` and ``generate`` delegate to the existing
-    connector/adapter so current behavior is preserved exactly.
+    Identity is the source, not the provider name alone. A cloud provider is
+    unique by name, but local / OpenAI-compatible sources are per-endpoint, so
+    ``base_url`` is part of their identity (two Ollama servers at different URLs
+    are different sources). ``list_models`` and ``generate`` delegate to the
+    existing connector/adapter for cloud, preserving behavior exactly.
     """
 
     provider_name: str
@@ -75,7 +76,10 @@ class ModelSource:
 
     @property
     def source_id(self) -> str:
-        return self.provider_name
+        # Cloud providers are unique by name; local sources are keyed by endpoint.
+        if self.source_type == "cloud" or not self.base_url:
+            return self.provider_name
+        return f"{self.provider_name}:{self.base_url}"
 
     def _connector(self, api_key: str) -> BaseConnector:
         return _load_class(_CONNECTORS[self.provider_name])(api_key)
@@ -113,6 +117,11 @@ def get_model_source(provider: str, *, source_type: str = "cloud", base_url: str
     """Resolve a ModelSource. Cloud providers come from the static registry;
     local / OpenAI-compatible sources are built per call from their ``base_url``."""
     if source_type and source_type != "cloud":
+        if source_type not in NON_CLOUD_SOURCE_TYPES:
+            raise ValueError(
+                f"Unknown source_type '{source_type}' for provider '{provider}'. "
+                f"Expected 'cloud' or one of: {', '.join(sorted(NON_CLOUD_SOURCE_TYPES))}."
+            )
         return ModelSource(provider_name=provider, source_type=source_type, base_url=base_url)
     source = _SOURCES.get(provider)
     if source is None:

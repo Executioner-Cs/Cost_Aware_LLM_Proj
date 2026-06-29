@@ -6,15 +6,20 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from sentence_transformers import SentenceTransformer
-
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384
 
 
 @lru_cache(maxsize=1)
-def get_embedder() -> SentenceTransformer:
-    """Load once (~200ms first call), reuse forever. ~22 MB model."""
+def get_embedder():
+    """Load once (~200ms first call), reuse forever. ~22 MB model.
+
+    sentence-transformers (and its torch stack) is imported here, lazily, so
+    that importing this module costs nothing until an embedding is actually
+    needed (semantic cache only). Belongs to the optional heavy-cache extra.
+    """
+    from sentence_transformers import SentenceTransformer
+
     return SentenceTransformer(EMBEDDING_MODEL)
 
 

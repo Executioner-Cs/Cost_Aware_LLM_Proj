@@ -106,3 +106,26 @@ class CacheEntry(Base):
     hit_count = Column(Integer, default=0)
     created_at = Column(String, nullable=False)
     last_hit_at = Column(String)
+
+
+class ExactCacheEntry(Base):
+    """Exact-match cache keyed by sha256(normalized_prompt + task_type + quality).
+
+    Separate table from cache_entries (which is the semantic/Qdrant-linked store)
+    so that ``Base.metadata.create_all`` provisions it on existing databases
+    without a migration: create_all adds missing tables but never alters or adds
+    columns to an existing one. No vectors are stored here.
+    """
+    __tablename__ = "exact_cache"
+
+    prompt_hash = Column(String, primary_key=True)   # sha256 hex; primary key is indexed
+    response_text = Column(Text, nullable=False)
+    task_type = Column(String, nullable=False)
+    quality = Column(String, nullable=False)
+    provider = Column(String)
+    model_id = Column(String)
+    input_tokens = Column(Integer)
+    output_tokens = Column(Integer)
+    hit_count = Column(Integer, default=0)
+    created_at = Column(String, nullable=False)
+    last_hit_at = Column(String)

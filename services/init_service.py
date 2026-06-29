@@ -28,7 +28,10 @@ fallback_enabled = true
 
 [cache]
 enabled = true
+# mode: "exact" (default, no extra deps) | "semantic" (needs cache/heavy-cache extra) | "off"
+mode = "exact"
 ttl_seconds = 86400
+# --- semantic mode only (ignored when mode = "exact") ---
 similarity_threshold = 0.92
 task_thresholds.json_extract = 0.95
 task_thresholds.reasoning = 0.93
@@ -84,16 +87,18 @@ def run_init(home: Path | None = None) -> None:
         create_all_tables(db_path)
         progress.update(t, completed=True)
 
-        # 3. Create Qdrant collection
-        progress.update(t, description="Initialising Qdrant vector store…")
-        qdrant_path = home / "qdrant"
-        _ensure_qdrant_collection(qdrant_path)
-        progress.update(t, completed=True)
+        # 3. Cache backend setup — only for semantic mode. The default exact
+        #    cache needs no vector store and no embedding model, so a base
+        #    install never touches Qdrant or sentence-transformers here.
+        mode = load_config(home).get("cache", {}).get("mode", "exact")
+        if mode == "semantic":
+            progress.update(t, description="Initialising Qdrant vector store…")
+            _ensure_qdrant_collection(home / "qdrant")
+            progress.update(t, completed=True)
 
-        # 4. Warm up embedding model
-        progress.update(t, description="Warming up embedding model (first run downloads ~22 MB)…")
-        _warmup_embedder()
-        progress.update(t, completed=True)
+            progress.update(t, description="Warming up embedding model (first run downloads ~22 MB)…")
+            _warmup_embedder()
+            progress.update(t, completed=True)
 
     print_success(f"Orchestrator initialised at [bold]{home}[/bold]")
     render_init_success_panel(home)
@@ -107,48 +112,39 @@ def _run_post_init_connect_handoff() -> None:
 
     render_init_handoff_panel()
     load_dotenv_once()
-    connected: list[str] = []
 
-    while True:
-        provider = pick_provider(console)
-        if not provider:
-            if not connected:
-                _print_fallback_connect_commands("No provider selected.")
-            else:
-                console.print(
-                    f"[bold bright_cyan]Connected providers:[/bold bright_cyan] "
-                    + ", ".join(connected)
-                )
-                console.print("[dim]Launching interactive shell…[/dim]")
-            return
+    provider = pick_provider(console)
+    if not provider:
+        _print_fallback_connect_commands("No provider selected.")
+        return
 
-        env_key = (get_provider_api_key(provider) or "").strip()
-
-        if env_key:
-            account_id, display_name = _try_connect(provider, env_key)
-            if account_id:
-                _print_connect_success(provider, account_id, display_name)
-                connected.append(provider)
-                continue
-            print_warning(f"Saved {provider} key failed. Enter a valid key to retry.")
-            if _prompt_loop_until_connected(provider, connected):
-                continue
-            # user submitted empty — let them pick again or skip
-            continue
-
-        key = _prompt_api_key(provider)
-        if not key:
-            # user hit Enter with no key — go back to picker
-            print_warning("No key entered — returning to provider picker.")
-            continue
-        account_id, display_name = _try_connect(provider, key)
+    # Prefer an env / .env key; otherwise prompt. Either way a connect attempt
+    # may retry on a bad key, then fall back to manual commands. Single provider
+    # per init handoff; the picker terminates the flow.
+    env_key = (get_provider_api_key(provider) or "").strip()
+    if env_key:
+        account_id, display_name = _try_connect(provider, env_key)
         if account_id:
             _print_connect_success(provider, account_id, display_name)
-            connected.append(provider)
-            continue
-        print_warning("Connect failed. Enter a valid key to retry, or submit empty to return to picker.")
-        if _prompt_loop_until_connected(provider, connected):
-            continue
+            return
+        print_warning(f"Saved {provider} key failed. Enter a valid key to retry.")
+        if _prompt_loop_until_connected(provider):
+            return
+        _print_fallback_connect_commands("No API key supplied.")
+        return
+
+    key = _prompt_api_key(provider)
+    if not key:
+        _print_fallback_connect_commands("No API key supplied.")
+        return
+    account_id, display_name = _try_connect(provider, key)
+    if account_id:
+        _print_connect_success(provider, account_id, display_name)
+        return
+    print_warning("Connect failed. Enter a valid key to retry, or submit empty to skip.")
+    if _prompt_loop_until_connected(provider):
+        return
+    _print_fallback_connect_commands("No API key supplied.")
 
 
 def _prompt_api_key(provider: str) -> str:

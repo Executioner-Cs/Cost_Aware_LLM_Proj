@@ -14,24 +14,25 @@ def cache_callback(ctx: typer.Context):
 
 @app.command("stats")
 def cache_stats():
-    """Show semantic cache statistics."""
+    """Show cache statistics for the active cache mode."""
     from db.session import get_session
-    from core.semantic_cache import SemanticCache
+    from core.cache import get_cache, MissingFeatureError
     from services.init_service import get_home, load_config
     from rich.table import Table
     from rich.panel import Panel
-    from utils.console import console
+    from utils.console import console, print_error
 
     home = get_home()
     config = load_config(home)
-    threshold = config.get("cache", {}).get("similarity_threshold", 0.92)
+    mode = config.get("cache", {}).get("mode", "exact")
 
     session = get_session()
-    cache = SemanticCache(
-        qdrant_path=home / "qdrant",
-        sqlite_session=session,
-        similarity_threshold=threshold,
-    )
+    try:
+        cache = get_cache(config, session, home)
+    except MissingFeatureError as exc:
+        session.close()
+        print_error(str(exc))
+        raise typer.Exit(1)
     stats = cache.stats()
     cache.close()
     session.close()
@@ -39,11 +40,14 @@ def cache_stats():
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="bold cyan", no_wrap=True)
     grid.add_column()
+    grid.add_row("Mode", mode)
     grid.add_row("Total entries", str(stats["total_entries"]))
     grid.add_row("Total hits", str(stats["total_hits"]))
-    grid.add_row("Similarity threshold", str(threshold))
+    if mode == "semantic":
+        threshold = config.get("cache", {}).get("similarity_threshold", 0.92)
+        grid.add_row("Similarity threshold", str(threshold))
 
-    console.print(Panel(grid, title="Semantic Cache Statistics", border_style="cyan"))
+    console.print(Panel(grid, title="Cache Statistics", border_style="cyan"))
 
     if stats["top_entries"]:
         table = Table(title="Top Reused Entries")
@@ -106,9 +110,9 @@ def cache_clear(
 ):
     """Clear cache entries. Optionally filter by task-type or age."""
     from db.session import get_session
-    from core.semantic_cache import SemanticCache
+    from core.cache import get_cache, MissingFeatureError
     from services.init_service import get_home, load_config
-    from utils.console import print_success
+    from utils.console import print_success, print_error
 
     confirm = typer.confirm("This will delete cache entries permanently. Continue?")
     if not confirm:
@@ -116,14 +120,14 @@ def cache_clear(
 
     home = get_home()
     config = load_config(home)
-    threshold = config.get("cache", {}).get("similarity_threshold", 0.92)
 
     session = get_session()
-    cache = SemanticCache(
-        qdrant_path=home / "qdrant",
-        sqlite_session=session,
-        similarity_threshold=threshold,
-    )
+    try:
+        cache = get_cache(config, session, home)
+    except MissingFeatureError as exc:
+        session.close()
+        print_error(str(exc))
+        raise typer.Exit(1)
     deleted = cache.clear(task_type=task_type, older_than_days=older_than)
     cache.close()
     session.close()

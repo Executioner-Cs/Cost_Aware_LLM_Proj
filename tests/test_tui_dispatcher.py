@@ -238,3 +238,68 @@ def test_benchmark_run_full_flow(tmp_state, monkeypatch):
     d.dispatch('benchmark add-task qa "2+2?" --expected 4 --grader exact')
     result = d.dispatch("benchmark run qa")
     assert isinstance(result[0], Table)  # scorecards rendered, no crash
+
+    # And the score is actually correct (model answered "4", exact-graded vs "4").
+    from db.models import Scorecard
+    card = session.query(Scorecard).filter_by(model_id="gpt-4o-mini").order_by(Scorecard.created_at.desc()).first()
+    assert card.score == 1.0 and card.tasks_passed == 1 and card.tasks_total == 1
+
+
+def test_benchmark_run_empty_task_set_warns_not_scores(tmp_state):
+    state, session, home = tmp_state
+    d = Dispatcher(state)
+    from rich.text import Text
+    from db.models import Scorecard
+    d.dispatch("benchmark create empty")
+    result = d.dispatch("benchmark run empty")
+    assert isinstance(result[0], Text) and "no tasks" in result[0].plain
+    assert session.query(Scorecard).count() == 0  # no misleading 0% rows written
+
+
+def test_benchmark_scorecards_unknown_task_set(tmp_state):
+    state, session, home = tmp_state
+    d = Dispatcher(state)
+    from rich.text import Text
+    result = d.dispatch("benchmark scorecards --task-set nobody")
+    assert isinstance(result[0], Text) and "not found" in result[0].plain
+
+
+def test_connect_openai_compatible_without_base_url_errors(tmp_state):
+    state, session, home = tmp_state
+    d = Dispatcher(state)
+    from rich.text import Text
+    # is_local is True (no inline-key guard), so it reaches the service, which
+    # requires a base_url for openai-compatible and raises a clean error.
+    result = d.dispatch("connect openai-compatible")
+    assert isinstance(result[0], Text) and "base-url" in result[0].plain.lower()
+
+
+def test_connect_cloud_with_base_url_no_key_still_prompts(tmp_state):
+    state, session, home = tmp_state
+    d = Dispatcher(state)
+    from rich.text import Text
+    # A cloud provider without a key must still be told to supply one, even if a
+    # stray --base-url is passed (guard no longer keys off base_url).
+    result = d.dispatch("connect openai --base-url http://x")
+    assert isinstance(result[0], Text) and "supply the key" in result[0].plain.lower()
+
+
+def test_route_policy_and_task_set_forwarded(tmp_state, monkeypatch):
+    from types import SimpleNamespace
+    state, session, home = tmp_state
+    captured = {}
+
+    def fake_route_prompt(request, session=None):
+        captured["policy"] = request.policy
+        captured["task_set"] = request.task_set
+        return SimpleNamespace(
+            task_type="simple", route_reason="r", provider="openai", model_id="m",
+            cache_hit=False, cache_similarity=None, input_tokens=None, output_tokens=None,
+            estimated_cost_usd=0.0, latency_ms=None, response_text=None,
+            route_explanation="explained",
+        )
+
+    monkeypatch.setattr("services.routing_service.route_prompt", fake_route_prompt)
+    d = Dispatcher(state)
+    d.dispatch('route "hi" --policy benchmarked --task-set qa')
+    assert captured == {"policy": "benchmarked", "task_set": "qa"}

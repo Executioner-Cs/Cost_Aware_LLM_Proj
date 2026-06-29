@@ -60,7 +60,7 @@ HELP_TEXT = """\
 
 [bold]Benchmarks[/bold]
   [bold]benchmark create[/bold] [cyan]<name>[/cyan] [--description D]
-  [bold]benchmark add-task[/bold] [cyan]<set> <prompt>[/cyan] --expected E [--grader exact|contains|json_valid]
+  [bold]benchmark add-task[/bold] [cyan]<set> <prompt>[/cyan] --expected E [--grader exact|contains|json_valid] [--task T]
   [bold]benchmark run[/bold] [cyan]<set>[/cyan] [--models m1,m2]
   [bold]benchmark scorecards[/bold] [--task-set S]
       Build task sets, run them across your models, and view local scorecards.
@@ -69,7 +69,7 @@ HELP_TEXT = """\
   [bold]route[/bold] [cyan]<prompt>[/cyan] [--task T] [--quality Q] [--policy P] [--task-set S] [--dry-run]
       --task    : simple | json_extract | reasoning | vision | tools
       --quality : cheap | balanced (default) | best
-      --policy  : default | privacy-first | quality-first | benchmarked
+      --policy  : default | cheapest | privacy-first | quality-first | benchmarked
       --task-set: scope the benchmarked policy to one task set's scorecards
   [bold]quality[/bold] [cyan]<cheap|balanced|best>[/cyan]
       Set the default quality tier for this session.
@@ -230,7 +230,8 @@ class Dispatcher:
 
         meta.add_row("Cost", f"${result.estimated_cost_usd:.6f}")
         if result.latency_ms is not None:
-            meta.add_row("Latency", f"{result.latency_ms / 1000:.2f}s")
+            # One decimal to match the `orchestrator route` CLI output exactly.
+            meta.add_row("Latency", f"{result.latency_ms / 1000:.1f}s")
 
         renderables: list[Any] = [meta]
 
@@ -264,7 +265,7 @@ class Dispatcher:
         # Local sources can be keyless (Ollama) or key-via-base_url (OpenAI-compatible);
         # only cloud providers must have a key supplied inline (no interactive prompt here).
         is_local = ns.provider.lower() in {"ollama", "openai-compatible", "openai_compatible"}
-        if not api_key and not is_local and not ns.base_url:
+        if not api_key and not is_local:
             return [Text(
                 f"Please supply the key inline:  connect {ns.provider} --api-key sk-...",
                 style="yellow"
@@ -542,7 +543,7 @@ class Dispatcher:
         except SystemExit:
             return [Text("Usage: benchmark add-task <set> <prompt> --expected E [--grader exact|contains|json_valid]", style="yellow")]
         if ns.grader not in GRADERS:
-            return [Text(f"grader must be one of {GRADERS}", style="yellow")]
+            return [Text(f"grader must be one of: {' | '.join(GRADERS)}", style="yellow")]
         if ns.grader in ("exact", "contains") and not ns.expected:
             return [Text(f"grader '{ns.grader}' needs --expected; only json_valid runs without it.", style="yellow")]
         ts = get_task_set_by_name(self.state.session, ns.task_set)
@@ -574,6 +575,13 @@ class Dispatcher:
         ts = get_task_set_by_name(session, ns.task_set)
         if not ts:
             return [Text(f"Task set '{ns.task_set}' not found.", style="red")]
+        if not ts.tasks:
+            # Running an empty set would write 0% scorecards for every model and
+            # pollute future `benchmark scorecards` output. Refuse early.
+            return [Text(
+                f"Task set '{ns.task_set}' has no tasks. Add some with: benchmark add-task {ns.task_set} <prompt> --expected ...",
+                style="yellow",
+            )]
         wanted = {x.strip() for x in ns.models.split(",") if x.strip()}
         selected = [m for m in list_enabled(session) if (not wanted or m.external_model_id in wanted)]
         if not selected:

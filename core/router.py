@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from core import classifier, reasons
 from core.cache import get_cache
 from core.cost_estimator import estimate_tokens, estimate_cost
-from core.policy import decide as decide_route
+from core.policy import decide as decide_route, get_policy
 from core.validator import validate, ValidationError
 from db.models import Trace
 from db.repositories.models import list_enabled
@@ -100,9 +100,28 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
         raise RuntimeError("No models in registry. Run `orchestrator connect <provider>` first.")
 
     # Default policy reproduces cheapest-capable selection exactly; explicit
-    # policies (privacy-first, quality-first, ...) plug in here without changing
-    # the default route. See core/policy.py.
-    selected = decide_route(all_models, task_type, quality, input_token_estimate).selected
+    # policies (privacy-first, quality-first, benchmarked, ...) plug in here
+    # without changing the default route. See core/policy.py.
+    policy = get_policy(request.policy)
+    scores = None
+    if policy.prefer_scorecards:
+        # Scorecard-aware routing: load the user's own benchmark scores. Scoped to
+        # a task set when given, otherwise the best score per model across all sets.
+        from services.benchmark_service import scores_by_model, get_task_set_by_name
+
+        task_set_id = None
+        if request.task_set:
+            task_set = get_task_set_by_name(session, request.task_set)
+            task_set_id = task_set.id if task_set else None
+        scores = scores_by_model(session, task_set_id)
+
+    decision = decide_route(
+        all_models, task_type, quality, input_token_estimate, policy=policy, scores=scores,
+    )
+    selected = decision.selected
+    # Surface the reasoning only for explicit policies; the default route output
+    # stays exactly as before (no extra line).
+    route_explanation = None if policy.is_default else decision.explanation
     if not selected:
         _write_trace(
             session=session, prompt=prompt, task_type=task_type,
@@ -135,6 +154,7 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
             estimated_cost_usd=est_cost,
             latency_ms=None,
             response_text=None,
+            route_explanation=route_explanation,
         )
 
     # ------------------------------------------------------------------ #
@@ -238,6 +258,7 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
         estimated_cost_usd=actual_cost,
         latency_ms=gen_result.latency_ms,
         response_text=gen_result.response_text,
+        route_explanation=route_explanation,
     )
 
 

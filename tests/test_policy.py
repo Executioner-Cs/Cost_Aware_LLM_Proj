@@ -108,3 +108,43 @@ def test_get_policy_resolves_names_safely():
     assert get_policy(None) is DEFAULT_POLICY
     assert get_policy("privacy-first").require_local is True
     assert get_policy("does-not-exist") is DEFAULT_POLICY      # safe fallback, never raises
+
+
+# --------------------------------------------------------------------------- #
+# Scorecard-aware (opt-in) policy. Default stays unchanged with the new fields.
+# --------------------------------------------------------------------------- #
+
+def test_default_policy_still_default_with_scorecard_fields():
+    assert DEFAULT_POLICY.is_default is True
+    assert POLICIES["benchmarked"].is_default is False
+    assert get_policy("benchmarked").prefer_scorecards is True
+
+
+def test_benchmarked_policy_prefers_high_scored_over_cheaper():
+    models = [_m("cheap", cost=0.1), _m("good", cost=5.0)]
+    # Without a policy the cheap model wins (behavior preserved).
+    assert decide(models, "simple", "balanced").selected.external_model_id == "cheap"
+    # With scorecards, the model that scored well on the user's tasks wins.
+    scored = decide(
+        models, "simple", "balanced",
+        policy=POLICIES["benchmarked"], scores={"good": 0.95, "cheap": 0.2},
+    )
+    assert scored.selected.external_model_id == "good"
+    assert "scored 95%" in scored.explanation
+
+
+def test_benchmarked_policy_no_scores_falls_back_to_cheapest():
+    models = [_m("cheap", cost=0.1), _m("pricey", cost=5.0)]
+    decision = decide(models, "simple", "balanced", policy=POLICIES["benchmarked"], scores={})
+    assert decision.selected.external_model_id == "cheap"        # explicit no-scorecard fallback
+    assert "fell back to cheapest-capable" in decision.explanation
+
+
+def test_benchmarked_policy_scored_beats_unscored_cheaper():
+    # 'good' has a scorecard, 'cheap' does not: the scored model still wins.
+    models = [_m("cheap", cost=0.1), _m("good", cost=5.0)]
+    decision = decide(
+        models, "simple", "balanced",
+        policy=POLICIES["benchmarked"], scores={"good": 0.9},
+    )
+    assert decision.selected.external_model_id == "good"

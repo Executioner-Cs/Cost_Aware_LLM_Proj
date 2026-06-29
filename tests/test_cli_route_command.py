@@ -32,6 +32,7 @@ def test_route_dry_run_flag_is_parsed(monkeypatch):
             estimated_cost_usd=0.0,
             latency_ms=None,
             response_text=None,
+            route_explanation=None,
         )
 
     monkeypatch.setattr("db.session.get_session", fake_get_session)

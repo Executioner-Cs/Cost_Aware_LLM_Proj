@@ -38,6 +38,10 @@ class RoutingPolicy:
     weight_cost: float = 1.0      # prefer cheaper
     weight_quality: float = 0.0   # prefer higher tier
     weight_context: float = 0.0   # prefer larger context window
+    # Prefer models that scored well on the user's own benchmark task sets. The
+    # score per model is supplied to ``decide`` by the caller (core stays I/O-free).
+    prefer_scorecards: bool = False
+    weight_scorecard: float = 0.0
     # Declared but not yet scored (no data until benchmark scorecards exist).
     weight_latency: float = 0.0
     weight_reliability: float = 0.0
@@ -47,6 +51,7 @@ class RoutingPolicy:
         return (
             not self.require_local and not self.require_json and not self.require_tools
             and self.weight_quality == 0.0 and self.weight_context == 0.0
+            and not self.prefer_scorecards and self.weight_scorecard == 0.0
             and self.weight_latency == 0.0 and self.weight_reliability == 0.0
         )
 
@@ -59,6 +64,11 @@ POLICIES: dict[str, RoutingPolicy] = {
     "cheapest": DEFAULT_POLICY,
     "privacy-first": RoutingPolicy(name="privacy-first", require_local=True),
     "quality-first": RoutingPolicy(name="quality-first", weight_quality=2.0, weight_cost=0.5),
+    # Benchmark-driven routing: a high score on the user's own task sets dominates,
+    # with cost as the tie-breaker so unscored models fall back to cheapest-capable.
+    "benchmarked": RoutingPolicy(
+        name="benchmarked", prefer_scorecards=True, weight_scorecard=3.0, weight_cost=0.5,
+    ),
 }
 
 
@@ -94,16 +104,30 @@ def _passes_hard_filters(m: ModelRegistry, policy: RoutingPolicy) -> bool:
     return True
 
 
-def _score(m: ModelRegistry, policy: RoutingPolicy, pool: list[ModelRegistry]) -> float:
+def _score(
+    m: ModelRegistry,
+    policy: RoutingPolicy,
+    pool: list[ModelRegistry],
+    scores: Optional[dict[str, float]] = None,
+) -> float:
     max_cost = max((_cost(x) for x in pool), default=0.0) or 1.0
     max_ctx = max((x.context_window or 0 for x in pool), default=0) or 1
     cost_term = policy.weight_cost * (1.0 - _cost(m) / max_cost)              # cheaper -> higher
     quality_term = policy.weight_quality * (TIER_ORDER.get(m.tier, 0) / 2.0)  # higher tier -> higher
     context_term = policy.weight_context * ((m.context_window or 0) / max_ctx)
-    return cost_term + quality_term + context_term
+    # Unscored models contribute 0 here, so cost still ranks them: the explicit
+    # no-scorecard fallback to cheapest-capable.
+    scorecard_term = 0.0
+    if policy.weight_scorecard and scores:
+        scorecard_term = policy.weight_scorecard * scores.get(m.external_model_id, 0.0)
+    return cost_term + quality_term + context_term + scorecard_term
 
 
-def _explain(winner: ModelRegistry, policy: RoutingPolicy) -> str:
+def _explain(
+    winner: ModelRegistry,
+    policy: RoutingPolicy,
+    scores: Optional[dict[str, float]] = None,
+) -> str:
     prefs = []
     if policy.require_local:
         prefs.append("local-only (privacy)")
@@ -115,10 +139,19 @@ def _explain(winner: ModelRegistry, policy: RoutingPolicy) -> str:
         prefs.append("quality-weighted")
     if policy.weight_context:
         prefs.append("context-weighted")
+    if policy.prefer_scorecards:
+        prefs.append("scorecard-weighted")
     detail = f" under {', '.join(prefs)}" if prefs else ""
+    note = ""
+    if policy.prefer_scorecards:
+        winner_score = (scores or {}).get(winner.external_model_id)
+        if winner_score is not None:
+            note = f" It scored {winner_score:.0%} on your benchmarks."
+        else:
+            note = " No scorecard for the winner; fell back to cheapest-capable."
     return (
         f"Policy '{policy.name}' selected {winner.external_model_id} "
-        f"({winner.provider}, tier {winner.tier}){detail}."
+        f"({winner.provider}, tier {winner.tier}){detail}.{note}"
     )
 
 
@@ -128,11 +161,15 @@ def decide(
     quality: str = "balanced",
     input_tokens: int = 0,
     policy: RoutingPolicy = DEFAULT_POLICY,
+    scores: Optional[dict[str, float]] = None,
 ) -> RouteDecision:
     """Choose a model under *policy* and explain the choice.
 
     For the default policy the winner is the cheapest capable model, identical to
     ``model_selector.select``. Explicit policies score the candidate pool.
+    ``scores`` maps ``external_model_id`` to a benchmark score in [0, 1]; it is
+    consulted only by scorecard-aware policies and supplied by the caller so this
+    module performs no I/O.
     """
     pool = [
         m for m in model_selector.candidates(models, task_type, quality, input_tokens)
@@ -159,10 +196,10 @@ def decide(
             f"Selected the cheapest capable model for task '{task_type}', quality '{quality}'."
         )
     else:
-        ordered = sorted(pool, key=lambda m: _score(m, policy, pool), reverse=True)
+        ordered = sorted(pool, key=lambda m: _score(m, policy, pool, scores), reverse=True)
         winner = ordered[0]
-        ranked = [(m.external_model_id, round(_score(m, policy, pool), 4)) for m in ordered]
-        explanation = _explain(winner, policy)
+        ranked = [(m.external_model_id, round(_score(m, policy, pool, scores), 4)) for m in ordered]
+        explanation = _explain(winner, policy, scores)
 
     fallback = [mid for mid, _ in ranked if mid != winner.external_model_id]
     return RouteDecision(

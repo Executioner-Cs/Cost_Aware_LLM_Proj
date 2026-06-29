@@ -77,33 +77,42 @@ def run_benchmark(
     generate_fn: GenerateFn,
 ) -> BenchmarkRun:
     """Run every task in *task_set* against each model and persist one Scorecard
-    per model. ``generate_fn`` performs the model call (injected for testability)."""
+    per model. ``generate_fn`` performs the model call (injected for testability).
+
+    A failure mid-run rolls back the whole run. SQLAlchemy autoflushes the pending
+    ``BenchmarkRun`` row when ``task_set.tasks`` lazy-loads, and on SQLite that row
+    can otherwise survive ``session.close()`` as an orphan with zero scorecards.
+    Rolling back guarantees a run is persisted only when it actually completed."""
     ensure_tables(session)
     run = BenchmarkRun(id=str(uuid.uuid4()), task_set_id=task_set.id, status="completed", created_at=_now())
     session.add(run)
 
-    tasks = list(task_set.tasks)
-    for model in models:
-        passed = 0
-        latency_total = 0.0
-        cost_total = 0.0
-        for task in tasks:
-            response, latency_ms, cost_usd = generate_fn(model, task.prompt)
-            if grade(task.grader, response, task.expected):
-                passed += 1
-            latency_total += latency_ms or 0.0
-            cost_total += cost_usd or 0.0
-        n = len(tasks)
-        session.add(Scorecard(
-            id=str(uuid.uuid4()), run_id=run.id, task_set_id=task_set.id,
-            provider=model.provider, model_id=model.external_model_id,
-            tasks_total=n, tasks_passed=passed,
-            score=(passed / n if n else 0.0),
-            avg_latency_ms=(latency_total / n if n else 0.0),
-            avg_cost_usd=(cost_total / n if n else 0.0),
-            created_at=_now(),
-        ))
-    session.commit()
+    try:
+        tasks = list(task_set.tasks)
+        for model in models:
+            passed = 0
+            latency_total = 0.0
+            cost_total = 0.0
+            for task in tasks:
+                response, latency_ms, cost_usd = generate_fn(model, task.prompt)
+                if grade(task.grader, response, task.expected):
+                    passed += 1
+                latency_total += latency_ms or 0.0
+                cost_total += cost_usd or 0.0
+            n = len(tasks)
+            session.add(Scorecard(
+                id=str(uuid.uuid4()), run_id=run.id, task_set_id=task_set.id,
+                provider=model.provider, model_id=model.external_model_id,
+                tasks_total=n, tasks_passed=passed,
+                score=(passed / n if n else 0.0),
+                avg_latency_ms=(latency_total / n if n else 0.0),
+                avg_cost_usd=(cost_total / n if n else 0.0),
+                created_at=_now(),
+            ))
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     return run
 
 

@@ -24,14 +24,19 @@ def create(
     """Create a task set."""
     from db.session import get_session
     from services.benchmark_service import create_task_set
-    from utils.console import print_success
+    from utils.console import print_success, print_error
 
     session = get_session()
     try:
         ts = create_task_set(session, name, description or None)
+        print_success(f"Created task set '{name}' (id: {ts.id[:8]}...)")
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        print_error(f"Could not create task set: {exc}")
+        raise typer.Exit(1)
     finally:
         session.close()
-    print_success(f"Created task set '{name}' (id: {ts.id[:8]}...)")
 
 
 @app.command("add-task")
@@ -51,6 +56,9 @@ def add_task_cmd(
     if grader not in GRADERS:
         print_error(f"grader must be one of {GRADERS}")
         raise typer.Exit(1)
+    if grader in ("exact", "contains") and not expected:
+        print_error(f"grader '{grader}' needs --expected; only json_valid runs without it.")
+        raise typer.Exit(1)
     session = get_session()
     try:
         ts = get_task_set_by_name(session, task_set)
@@ -58,9 +66,14 @@ def add_task_cmd(
             print_error(f"Task set '{task_set}' not found. Create it with `orchestrator benchmark create`.")
             raise typer.Exit(1)
         add_task(session, ts.id, prompt, expected or None, grader, task_type)
+        print_success(f"Added task to '{task_set}'.")
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        print_error(f"Could not add task: {exc}")
+        raise typer.Exit(1)
     finally:
         session.close()
-    print_success(f"Added task to '{task_set}'.")
 
 
 def _scorecard_table(title, cards):
@@ -98,6 +111,7 @@ def run_cmd(
     from utils.console import console, print_error
 
     session = get_session()
+    cards = []
     try:
         ts = get_task_set_by_name(session, task_set)
         if not ts:
@@ -128,6 +142,14 @@ def run_cmd(
 
         run_benchmark(session, ts, selected, generate_fn)
         cards = list_scorecards(session, ts.id)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        # Never let a provider/decrypt error escape as a raw traceback: Typer's
+        # default rich traceback prints frame locals, and generate_fn holds the
+        # decrypted api_key. A clean message keeps the key off the screen.
+        print_error(f"Benchmark run failed: {exc}")
+        raise typer.Exit(1)
     finally:
         session.close()
 
@@ -141,15 +163,24 @@ def scorecards_cmd(
     """Show stored scorecards (best score first)."""
     from db.session import get_session
     from services.benchmark_service import get_task_set_by_name, list_scorecards
-    from utils.console import console
+    from utils.console import console, print_error
 
     session = get_session()
+    cards = []
     try:
         ts_id = None
         if task_set:
             ts = get_task_set_by_name(session, task_set)
-            ts_id = ts.id if ts else "__none__"
+            if not ts:
+                print_error(f"Task set '{task_set}' not found.")
+                raise typer.Exit(1)
+            ts_id = ts.id
         cards = list_scorecards(session, ts_id)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        print_error(f"Could not list scorecards: {exc}")
+        raise typer.Exit(1)
     finally:
         session.close()
     if not cards:

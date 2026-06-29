@@ -56,6 +56,13 @@ def test_grade_unknown_raises():
         grade("vibes", "x", "y")
 
 
+def test_grade_contains_none_expected():
+    # Documented foot-gun: contains with no expected passes any non-empty text.
+    # The CLI rejects this at add-task time; the core stays permissive on purpose.
+    assert grade("contains", "any text", None) is True
+    assert grade("contains", "", None) is False
+
+
 # --------------------------------------------------------------------------- #
 # Task sets + runs + scorecards
 # --------------------------------------------------------------------------- #
@@ -106,6 +113,31 @@ def test_list_scorecards_sorted_by_score(session):
     bench.run_benchmark(session, ts, [lo, hi], fake_generate)
     cards = bench.list_scorecards(session, ts.id)
     assert [c.model_id for c in cards] == ["hi", "lo"]  # best score first
+
+
+def test_run_benchmark_zero_tasks(session):
+    ts = bench.create_task_set(session, "empty")
+    model = _model("m")
+    run = bench.run_benchmark(session, ts, [model], lambda m, p: ("x", 1.0, 0.0))
+    card = session.query(Scorecard).filter_by(run_id=run.id).one()
+    assert card.tasks_total == 0 and card.score == 0.0  # no ZeroDivisionError
+
+
+def test_run_benchmark_generate_fn_raises_rolls_back(session):
+    from db.models import BenchmarkRun
+
+    ts = bench.create_task_set(session, "boom")
+    bench.add_task(session, ts.id, "q", expected="a", grader="contains")
+
+    def exploding_generate(model, prompt):
+        raise RuntimeError("provider blew up")
+
+    with pytest.raises(RuntimeError):
+        bench.run_benchmark(session, ts, [_model("m")], exploding_generate)
+
+    # A failed run must leave nothing behind: no orphan run, no scorecards.
+    assert session.query(BenchmarkRun).count() == 0
+    assert session.query(Scorecard).count() == 0
 
 
 def test_ensure_tables_on_db_without_them(tmp_path):

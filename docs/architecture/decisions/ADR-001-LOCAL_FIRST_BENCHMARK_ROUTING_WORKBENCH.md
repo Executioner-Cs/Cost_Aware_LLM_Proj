@@ -17,9 +17,9 @@ Reposition Orchestrator CLI as a local-first AI routing, benchmarking, and execu
 Concretely:
 
 * Keep everything local-first. No required hosted services, no telemetry by default.
-* Keep the default route path slim. Heavy ML and vector dependencies are optional, not required.
+* Keep the default route path slim. The heavy ML and vector dependencies of the legacy semantic cache were removed; any future cache backend stays optional.
 * Treat benchmark-driven routing and local scorecards as the differentiator.
-* Treat the semantic cache as one optional backend, not the headline.
+* The legacy heavy semantic cache (sentence-transformers + Qdrant) was removed; the exact SQLite cache is the current implemented cache. A lighter `semantic-cache-v2` remains a future optional alternative. Redis is not part of this decision; local-first with no required daemon stays the default.
 * Treat agent mode as experimental until its P0 safety work lands.
 
 ## Alternatives considered

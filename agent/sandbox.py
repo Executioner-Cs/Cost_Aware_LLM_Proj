@@ -9,17 +9,26 @@ from pathlib import Path
 # search, even when it sits inside the sandbox root.
 _DENIED_NAMES = {
     ".env", ".netrc", "orchestrator.db", "orchestrator.db-wal", "orchestrator.db-shm",
-    # Common credential / private-key filenames.
-    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".git-credentials", ".pgpass",
-    ".npmrc", ".pypirc", ".htpasswd", "credentials",
+    # Private-key and password files (config files like .npmrc are NOT here: they
+    # are commonly legitimate project files, and secret values they may hold are
+    # caught by the credential/secret name rules and by log redaction).
+    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".git-credentials", ".pgpass", ".htpasswd",
 }
 _DENIED_SUFFIXES = {".key", ".pem", ".pfx", ".p12", ".keystore", ".jks"}
-# Any path component matching one of these is denied (credential directories).
-_DENIED_DIR_PARTS = {".orchestrator", ".ssh", ".aws", ".gnupg", ".kube", ".docker", ".gcloud", ".azure"}
+# Credential directories. Matched only on components BELOW the sandbox root (see
+# is_sensitive_path), so a sandbox_root nested under one of these does not deny
+# every file. ".docker" is intentionally absent: project-local .docker/ dirs
+# (Dockerfiles, compose fragments) are common and legitimate.
+_DENIED_DIR_PARTS = {".orchestrator", ".ssh", ".aws", ".gnupg", ".kube", ".gcloud", ".azure"}
 
 
-def is_sensitive_path(path: Path) -> bool:
-    """True if *path* (already resolved) is a credential or secret-like target."""
+def is_sensitive_path(path: Path, root: Path | None = None) -> bool:
+    """True if *path* (already resolved) is a credential or secret-like target.
+
+    When *root* is given, the credential-directory denylist is matched only on the
+    components below root (what the agent navigated into), not the root's own
+    ancestors, so a sandbox root nested under e.g. ``.gnupg`` does not deny every
+    file. Name/suffix/substring rules always apply regardless of root."""
     name = path.name.lower()
     if name in _DENIED_NAMES:
         return True
@@ -29,7 +38,13 @@ def is_sensitive_path(path: Path) -> bool:
         return True
     if "credential" in name or "secret" in name:
         return True
-    if {p.lower() for p in path.parts} & _DENIED_DIR_PARTS:
+    parts = path.parts
+    if root is not None:
+        try:
+            parts = path.relative_to(root).parts
+        except ValueError:
+            parts = path.parts
+    if {p.lower() for p in parts} & _DENIED_DIR_PARTS:
         return True
     return False
 
@@ -52,7 +67,7 @@ class Sandbox:
         else:
             candidate = (self.root / raw).resolve()
         self._ensure_under_root(candidate)
-        if is_sensitive_path(candidate):
+        if is_sensitive_path(candidate, self.root):
             raise ValueError(f"Access denied to sensitive path: {candidate}")
         return candidate
 

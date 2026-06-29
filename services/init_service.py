@@ -54,7 +54,7 @@ max_subprocess_seconds = 120
 allow_python = false
 allow_shell = false
 # Comma-separated substrings; shell commands containing any are rejected.
-blocked_shell_patterns = "rm -rf,mkfs,dd if=,:(){:|:&};:"
+blocked_shell_patterns = "rm -rf,mkfs,dd if=,:(){:|:&};:,chmod -R,chown -R,shutdown,reboot"
 # Advisory only: true OS-level network isolation is NOT enforced for tool
 # subprocesses. Do not treat this as a security boundary.
 network_disabled = true

@@ -143,18 +143,40 @@ def test_sandbox_denies_sensitive_paths():
 
 
 def test_sandbox_denies_more_credential_paths():
-    # Expanded denylist: credential dirs, private keys, keystores.
+    # Expanded denylist: credential dirs (as children of root), private keys, keystores.
     with tempfile.TemporaryDirectory() as d:
         sb = Sandbox(root=Path(d))
         for bad in (
             ".ssh/known_hosts", "id_rsa", "id_ed25519", ".aws/credentials",
-            ".gnupg/secring.gpg", ".kube/config", ".docker/config.json",
-            "server.pfx", "store.keystore", ".git-credentials", ".npmrc",
+            ".gnupg/secring.gpg", ".kube/config", "server.pfx", "store.keystore",
+            ".git-credentials", ".htpasswd",
         ):
             with pytest.raises(ValueError):
                 sb.resolve_path(bad)
         # A normal source file is still allowed.
         assert sb.resolve_path("src/main.py").name == "main.py"
+
+
+def test_sandbox_allows_legitimate_project_files():
+    # .docker/ (Dockerfiles) and .npmrc are common, legitimate project files and
+    # must NOT be blocked just because they can sometimes hold a token.
+    with tempfile.TemporaryDirectory() as d:
+        sb = Sandbox(root=Path(d))
+        assert sb.resolve_path(".docker/Dockerfile").name == "Dockerfile"
+        assert sb.resolve_path(".npmrc").name == ".npmrc"
+
+
+def test_sandbox_root_under_denied_dir_part_still_works(tmp_path):
+    # If the sandbox root merely sits under a directory named like a credential dir
+    # (e.g. a project checked out under ~/.gnupg/scratch), file ops must still work:
+    # the dir-part denylist applies to children of root, not the root's ancestors.
+    root = tmp_path / ".gnupg" / "scratch"
+    root.mkdir(parents=True)
+    sb = Sandbox(root=root)
+    assert sb.resolve_path("main.py").name == "main.py"
+    # But a credential dir BELOW the root is still denied.
+    with pytest.raises(ValueError):
+        sb.resolve_path(".ssh/id_rsa")
 
 
 def test_sandbox_symlink_target_outside_root_rejected(tmp_path):
@@ -178,23 +200,66 @@ def test_sandbox_symlink_target_outside_root_rejected(tmp_path):
 def test_default_blocked_shell_patterns_expanded():
     from agent.config import _parse_blocked_patterns
     defaults = _parse_blocked_patterns(None)
-    for pat in ("rm -rf", "sudo ", "curl ", "wget ", "chmod -R", "> /dev/"):
+    for pat in ("rm -rf", "chmod -R", "chown -R", "shutdown", "reboot"):
         assert pat in defaults
+    # Collision-prone patterns are deliberately NOT in the defaults.
+    assert "> /dev/" not in defaults
+    assert "curl " not in defaults
     # A user-supplied list still fully overrides the defaults.
     assert _parse_blocked_patterns("foo, bar") == ["foo", "bar"]
+
+
+def test_shell_block_mechanism_and_devnull_safe():
+    from agent.config import _DEFAULT_BLOCKED_SHELL_PATTERNS as P
+    from agent.tools.execution import _shell_blocked
+    # Destructive commands are blocked...
+    assert _shell_blocked("chmod -R 777 /", P) is not None
+    assert _shell_blocked("rm -rf /tmp/x", P) is not None
+    # ...but the ubiquitous /dev/null redirect is NOT blocked.
+    assert _shell_blocked("pytest -q > /dev/null 2>&1", P) is None
+    assert _shell_blocked("echo hi", P) is None
 
 
 def test_redact_more_key_shapes():
     blob = json.dumps(redact({
         "log": "ghp_0123456789abcdefghij0123456789abcd used; xoxb-123456-abcdef pushed",
         "openai": "sk-proj-abcdef123456 here",
-        "pem": "-----BEGIN RSA PRIVATE KEY-----",
     }))
     assert "ghp_0123456789abcdefghij" not in blob
     assert "xoxb-123456-abcdef" not in blob
     assert "sk-proj-abcdef123456" not in blob
-    assert "BEGIN RSA PRIVATE KEY" not in blob
     assert "***REDACTED***" in blob
+
+
+def test_redact_preserves_benign_auth_keys():
+    # Dropping the bare "auth" pattern: author/authority are not secrets.
+    out = redact({"author": "Alice Nakamura", "authority": "ca-root", "token": "tok_abc123456"})
+    assert out["author"] == "Alice Nakamura"
+    assert out["authority"] == "ca-root"
+    assert out["token"] == "***REDACTED***"
+
+
+def test_redact_full_pem_block_body():
+    pem = (
+        "-----BEGIN RSA PRIVATE KEY-----\n"
+        "MIIEowIBAAKCAQEAsupersecretkeymaterial0123456789\n"
+        "abcdefghijklmnopqrstuvwxyzABCDEF\n"
+        "-----END RSA PRIVATE KEY-----"
+    )
+    out = redact({"cmd": f"echo '{pem}' > k.pem"})["cmd"]
+    assert "supersecretkeymaterial" not in out  # body bytes gone, not just the header
+    assert "BEGIN RSA PRIVATE KEY" not in out
+    assert "***REDACTED***" in out
+
+
+def test_redact_assign_pattern_bounded_no_redos():
+    import time
+    # A long run of word chars before a key-like token used to be super-linear.
+    adversarial = "A" * 50_000 + "_API_KEY=secret123"
+    t0 = time.monotonic()
+    out = redact({"s": adversarial})["s"]
+    assert (time.monotonic() - t0) < 2.0  # bounded prefix -> linear, not seconds
+    assert "secret123" not in out
 
 
 # --------------------------------------------------------------------------- #

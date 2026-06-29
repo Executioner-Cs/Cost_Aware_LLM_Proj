@@ -54,7 +54,7 @@ def _search_ripgrep(sandbox: Sandbox, query: str, rg: str) -> dict[str, Any]:
         rel = []
         for p in paths[:_MAX_MATCHES]:
             resolved = Path(p).resolve()
-            if is_sensitive_path(resolved):
+            if is_sensitive_path(resolved, sandbox.root):
                 continue  # never surface credential/secret files in search results
             try:
                 rel.append(str(resolved.relative_to(sandbox.root)))
@@ -76,7 +76,7 @@ def _search_naive(sandbox: Sandbox, query: str) -> dict[str, Any]:
     scanned = 0
     try:
         for path in sandbox.root.rglob("*"):
-            if path.is_file() and path.suffix.lower() in _TEXT_SUFFIXES and not is_sensitive_path(path):
+            if path.is_file() and path.suffix.lower() in _TEXT_SUFFIXES and not is_sensitive_path(path, sandbox.root):
                 scanned += 1
                 if scanned > _MAX_FILES_SCAN:
                     break

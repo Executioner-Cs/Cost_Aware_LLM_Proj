@@ -1,4 +1,4 @@
-"""Utility hashing – used for trace IDs, not cache keys."""
+"""Utility hashing: used for exact cache keys (core/cache.py) and trace IDs."""
 from __future__ import annotations
 import hashlib
 

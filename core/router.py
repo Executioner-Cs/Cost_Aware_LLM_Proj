@@ -14,14 +14,13 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from core import classifier, reasons
+from core.cache import get_cache
 from core.cost_estimator import estimate_tokens, estimate_cost
 from core.model_selector import select as select_model
-from core.semantic_cache import SemanticCache
 from core.validator import validate, ValidationError
 from db.models import Trace
 from db.repositories.models import list_enabled
 from db.repositories.traces import create as create_trace
-from embeddings.embedder import embed
 from schemas.routing import RouteRequest, RouteResult
 from services.init_service import get_home, load_config
 from utils.crypto import decrypt
@@ -47,7 +46,6 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
     """Execute the full routing pipeline."""
     home = get_home()
     config = load_config(home)
-    cache_cfg = config.get("cache", {})
     cost_cfg = config.get("cost", {})
 
     # ------------------------------------------------------------------ #
@@ -62,27 +60,15 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
     quality = request.quality
 
     # ------------------------------------------------------------------ #
-    # 3. Embed prompt
+    # 3. Build cache backend (exact by default; semantic only when configured)
+    #    The exact/off path imports no embeddings/vector dependencies.
     # ------------------------------------------------------------------ #
-    embedding = embed(prompt)
+    cache = get_cache(config, session, home)
 
     # ------------------------------------------------------------------ #
-    # 4. Semantic cache lookup
+    # 4. Cache lookup (keyed by prompt + task_type + quality)
     # ------------------------------------------------------------------ #
-    cache_enabled = cache_cfg.get("enabled", True)
-    cache_result = None
-
-    if cache_enabled:
-        qdrant_path = home / "qdrant"
-        threshold = cache_cfg.get("similarity_threshold", 0.92)
-        task_thresholds = cache_cfg.get("task_thresholds", {})
-        cache = SemanticCache(
-            qdrant_path=qdrant_path,
-            sqlite_session=session,
-            similarity_threshold=threshold,
-            task_thresholds=task_thresholds,
-        )
-        cache_result = cache.lookup(embedding, task_type, quality)
+    cache_result = cache.lookup(prompt, task_type, quality)
 
     if cache_result:
         # Cache HIT — write trace and return immediately
@@ -219,17 +205,16 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
         selected.cost_per_1m_output or 0.0,
     )
 
-    if cache_enabled:
-        cache.store(
-            embedding=embedding,
-            task_type=task_type,
-            quality=quality,
-            response_text=gen_result.response_text,
-            provider=selected.provider,
-            model_id=selected.external_model_id,
-            input_tokens=gen_result.input_tokens,
-            output_tokens=gen_result.output_tokens,
-        )
+    cache.store(
+        prompt=prompt,
+        task_type=task_type,
+        quality=quality,
+        response_text=gen_result.response_text,
+        provider=selected.provider,
+        model_id=selected.external_model_id,
+        input_tokens=gen_result.input_tokens,
+        output_tokens=gen_result.output_tokens,
+    )
 
     # Cost warning
     warn_threshold = cost_cfg.get("warn_above_usd", 0.01)

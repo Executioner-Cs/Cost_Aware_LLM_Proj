@@ -133,3 +133,65 @@ class ExactCacheEntry(Base):
     hit_count = Column(Integer, default=0)
     created_at = Column(String, nullable=False)
     last_hit_at = Column(String)
+
+
+class TaskSet(Base):
+    """A user-owned set of representative tasks to benchmark models on."""
+    __tablename__ = "task_sets"
+
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    description = Column(Text)
+    created_at = Column(String, nullable=False)
+
+    tasks = relationship("BenchmarkTask", back_populates="task_set", cascade="all, delete-orphan")
+
+
+class BenchmarkTask(Base):
+    """One task in a TaskSet: a prompt plus how to grade the response."""
+    __tablename__ = "benchmark_tasks"
+
+    id = Column(String, primary_key=True)
+    task_set_id = Column(String, ForeignKey("task_sets.id"), nullable=False)
+    prompt = Column(Text, nullable=False)
+    expected = Column(Text)                          # for exact / contains graders
+    grader = Column(String, default="contains")      # 'exact' | 'contains' | 'json_valid'
+    task_type = Column(String, default="simple")
+    created_at = Column(String, nullable=False)
+
+    task_set = relationship("TaskSet", back_populates="tasks")
+
+
+class BenchmarkRun(Base):
+    """One execution of a TaskSet across selected models."""
+    __tablename__ = "benchmark_runs"
+
+    id = Column(String, primary_key=True)
+    task_set_id = Column(String, ForeignKey("task_sets.id"), nullable=False)
+    status = Column(String, default="completed")
+    created_at = Column(String, nullable=False)
+
+    scorecards = relationship("Scorecard", back_populates="run", cascade="all, delete-orphan")
+
+
+class Scorecard(Base):
+    """Local per-model result for one BenchmarkRun.
+
+    Deterministic scoring only (exact / contains / json_valid); no hosted service
+    and no LLM-as-judge in this version. ``score`` is the task pass rate in [0, 1].
+    """
+    __tablename__ = "scorecards"
+
+    id = Column(String, primary_key=True)
+    run_id = Column(String, ForeignKey("benchmark_runs.id"), nullable=False)
+    task_set_id = Column(String, nullable=False)
+    provider = Column(String, nullable=False)
+    model_id = Column(String, nullable=False)
+    tasks_total = Column(Integer, default=0)
+    tasks_passed = Column(Integer, default=0)
+    score = Column(Float, default=0.0)               # pass rate in [0, 1]
+    avg_latency_ms = Column(Float)
+    avg_cost_usd = Column(Float)
+    created_at = Column(String, nullable=False)
+
+    run = relationship("BenchmarkRun", back_populates="scorecards")

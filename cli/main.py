@@ -11,7 +11,7 @@ import sys
 import typer
 from typing import Annotated
 
-from cli.commands import connect, accounts, model, route, trace, cache, agent
+from cli.commands import connect, accounts, model, route, trace, cache, agent, benchmark
 
 app = typer.Typer(
     name="orchestrator",
@@ -133,6 +133,7 @@ app.add_typer(model.app,    name="model",    help="Browse the model registry.", 
 app.add_typer(trace.app,    name="trace",    help="Inspect routing traces.",        no_args_is_help=True)
 app.add_typer(cache.app,    name="cache",    help="Manage the semantic cache.",     no_args_is_help=True)
 app.add_typer(agent.app,    name="agent",    help="Tool-using agent (multi-provider).", no_args_is_help=True)
+app.add_typer(benchmark.app, name="benchmark", help="Benchmark models on your own task sets.", no_args_is_help=True)
 
 
 if __name__ == "__main__":

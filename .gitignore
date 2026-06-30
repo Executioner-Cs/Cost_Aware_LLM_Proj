@@ -32,13 +32,17 @@ env/
 .DS_Store
 Thumbs.db
 
-# Local / private Claude artifacts (never commit)
+# Local / private Claude Code artifacts (never commit). The internal Claude
+# operating files (CLAUDE.md, agents, skills, prompts, logs, cache) live here
+# locally and are intentionally untracked. Only a small public-safe README.md is
+# kept tracked, via the negation below. ".claude/*" (not ".claude/") is required
+# so the negation can re-include the README.
 CLAUDE.local.md
+.claude/*
+!.claude/README.md
 .claude/settings.local.json
 .claude/logs/
 .claude/cache/
 .claude/tmp/
-# Guard against accidental or unreviewed agent commits. The reviewer agents
-# already tracked under .claude/agents/ remain tracked and canonical; add a NEW
-# agent only deliberately, via a reviewed agent branch (git add -f).
 .claude/agents/
+.claude/skills/

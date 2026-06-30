@@ -1,23 +1,31 @@
 # Orchestrator CLI
 
-The operating guide for Claude Code in this repo lives at **`.claude/CLAUDE.md`**. Read it first.
+Local-first CLI to benchmark and route prompts across local and cloud LLMs by
+cost and capability, with an exact-match cache and experimental sandboxed agent
+tools. Single-user and local-first.
 
-Product, architecture, and roadmap docs live under **`docs/`**:
+## Setup
 
-* `docs/product/PRODUCT_DIRECTION.md` (what this is and is not)
-* `docs/product/MVP_V2_SCOPE.md` (V2 scope)
-* `docs/roadmap/BRANCH_ROADMAP.md` (branch order and scope)
-* `docs/architecture/ORCHESTRATOR_V2_ARCHITECTURE.md` (current and future architecture)
-* `docs/architecture/decisions/` (ADRs)
+* Python 3.11+
+* Install: `pip install -e ".[dev]"`
+* Test: `pytest`
 
-## Quickstart
+There is no lint, format, or typecheck command.
 
-```bash
-pip install -e ".[dev]"   # install with dev dependencies
-pytest                    # run the test suite
-```
+## Contributing notes
 
-There is no lint, format, or typecheck command. Private or machine-local
-instructions belong in `CLAUDE.local.md` (git-ignored, never committed).
+* One branch, one concern. Keep changes small and reviewable.
+* Never commit secrets or API keys. Provider keys load from the environment or a
+  local `.env` (git-ignored); use `.env.example` as the template.
+* Keep the base install light. Do not add heavy or unnecessary dependencies to
+  the default path; provider SDKs and the TUI are optional extras.
+* Do not claim features that are not implemented. Mark planned work as planned.
 
-This pointer is intentionally tiny. Do not move repo guidance back into this root file.
+## Docs
+
+* `README.md` for usage and install.
+* `docs/` for architecture and decision records.
+
+Machine-local Claude Code instructions, if you use any, belong in
+`CLAUDE.local.md` at the repo root, which is git-ignored. See
+`docs/development/CLAUDE_LOCAL_TEMPLATE.md` for a starting point.

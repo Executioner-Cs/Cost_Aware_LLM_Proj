@@ -31,6 +31,20 @@ def tmp_state(tmp_path):
     session.close()
 
 
+def test_refresh_stats_counts_enabled_models(tmp_state):
+    """model_count reflects enabled models so the status bar is honest, not a
+    hardcoded 0."""
+    state, session, home = tmp_state
+    assert state.model_count == 0
+    session.add(ModelRegistry(
+        id="m1", provider="ollama", external_model_id="llama3",
+        tier="balanced", enabled=1, discovered_at="2026-01-01T00:00:00",
+    ))
+    session.commit()
+    state.refresh_stats()
+    assert state.model_count == 1
+
+
 def test_empty_command_returns_nothing(tmp_state):
     state, session, home = tmp_state
     d = Dispatcher(state)

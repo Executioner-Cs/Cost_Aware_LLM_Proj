@@ -6,7 +6,12 @@ from unittest.mock import patch
 
 from textual.widgets import Input
 
-from cli.tui.app import SessionState, bootstrap_state
+from cli.tui.app import (
+    SessionState,
+    bootstrap_state,
+    _build_welcome_text,
+    _build_side_empty_state,
+)
 
 
 @pytest.fixture
@@ -29,11 +34,19 @@ async def test_app_starts_and_shows_welcome(app):
 
 
 @pytest.mark.asyncio
-async def test_prompt_placeholder_shows_orchestrator(app):
-    """The input placeholder contains 'orchestrator >'."""
+async def test_prompt_label_shows_orchestrator(app):
+    """The prompt label keeps the 'orchestrator >' branding."""
+    async with app.run_test(size=(120, 40)) as pilot:
+        label = app.query_one("#prompt-label")
+        assert "orchestrator >" in str(label.render()).lower()
+
+
+@pytest.mark.asyncio
+async def test_placeholder_guides_the_user(app):
+    """The placeholder hints at real commands instead of repeating the prompt."""
     async with app.run_test(size=(120, 40)) as pilot:
         inp = app.query_one("#cmd-input", Input)
-        assert "orchestrator" in inp.placeholder.lower()
+        assert "help" in inp.placeholder.lower()
 
 
 # ── Command execution ────────────────────────────────────────────────
@@ -139,3 +152,61 @@ async def test_subtitle_updates_after_bootstrap(app):
         await pilot.pause()
         subtitle = app.sub_title
         assert "models" in subtitle or "provider" in subtitle
+
+
+# ── First-impression polish ──────────────────────────────────────────
+
+
+def test_welcome_card_is_concise_and_uses_real_commands():
+    """The launch card guides the user with real in-shell commands and drops
+    the oversized ASCII banner."""
+    plain = _build_welcome_text().plain
+    # No giant block banner eating the screen.
+    assert "█" not in plain
+    assert plain.count("\n") <= 14
+    # Guided onboarding with commands the dispatcher actually accepts.
+    assert "Get started" in plain
+    for command in ("connect ollama", "benchmark create", "benchmark run", "route"):
+        assert command in plain
+    # Readable quit hint, not caret notation.
+    assert "Ctrl+Q" in plain
+    assert "^Q" not in plain
+
+
+def test_side_panel_empty_state_guides_the_user():
+    plain = _build_side_empty_state().plain
+    assert "No activity yet" in plain
+    assert "Connect a source" in plain
+
+
+@pytest.mark.asyncio
+async def test_side_panel_push_clears_empty_state(app):
+    """The first real activity replaces the placeholder exactly once."""
+    from cli.tui.app import SidePanel
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        side = app.query_one(SidePanel)
+        assert side._empty is True
+        side.push("route hello")
+        await pilot.pause()
+        assert side._empty is False
+
+
+def test_quit_and_clear_bindings_use_readable_key_display():
+    from cli.tui.app import OrchestratorApp
+
+    by_key = {b.key: b for b in OrchestratorApp.BINDINGS}
+    assert by_key["ctrl+q"].key_display == "Ctrl+Q"
+    assert by_key["ctrl+l"].key_display == "Ctrl+L"
+
+
+@pytest.mark.asyncio
+async def test_status_bar_shows_models_metric(app):
+    """The status line surfaces a models count (honest 0 on a fresh state)."""
+    from cli.tui.app import StatusBar
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        bar = app.query_one(StatusBar)
+        assert "models" in str(bar.render()).lower()

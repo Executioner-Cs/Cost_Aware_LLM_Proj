@@ -3,6 +3,35 @@
 All notable changes to Orchestrator CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## 0.2.1
+
+Patch release on top of 0.2.0: routing-identity correctness, honest provider
+fallback, and first-run polish. No new features.
+
+### Fixed
+
+- Source-qualified model identity: same-named models on different local or
+  custom endpoints stay distinct, while repeated cloud-provider connects still
+  deduplicate.
+- Provider catalog fallback is honest: when model discovery fails or is
+  unavailable, the built-in catalog is still used but a warning is shown instead
+  of falling back silently.
+- `init` output matches exact-cache behavior and no longer implies a semantic
+  cache, vector store, embeddings, or model download.
+- Encoding-safe console output: unicode glyphs in `init` and the agent spinner
+  fall back to ASCII on non-UTF consoles instead of mojibaking.
+
+### Added
+
+- One-line help descriptions for the `agent edit`, `explain`, `fix-tests`, and
+  `refactor` subcommands, so `agent --help` is no longer blank.
+- Smoke coverage for same-named models across distinct local endpoints.
+- A minimal v0.2 upgrade note in the README.
+
+### Changed
+
+- Local demo directories are git-ignored.
+
 ## 0.2.0
 
 Local-first AI routing and benchmarking workbench. The release theme is

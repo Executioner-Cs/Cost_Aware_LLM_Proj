@@ -4,6 +4,7 @@ from __future__ import annotations
 import httpx
 
 from providers.base import BaseConnector, ModelInfo
+from utils.console import print_warning
 
 # ── Comprehensive pricing catalog (per 1M tokens, USD) ───────────────────────
 # Covers GPT-4o, o-series, GPT-4 legacy, GPT-3.5, GPT-4.1, and reasoning models.
@@ -242,7 +243,13 @@ class OpenAIConnector(BaseConnector):
                     return results
         except Exception:
             pass
-        # Fallback to known-good list if API unreachable
+        # Discovery failed or returned nothing usable. Fall back to the built-in
+        # catalog, but say so: a silent fallback hides drift (stale models or
+        # pricing) from the user.
+        print_warning(
+            "OpenAI model discovery failed or was unavailable; using a built-in "
+            "fallback catalog. The model list and pricing may be out of date."
+        )
         return [ModelInfo(**m) for m in _FALLBACK_MODELS]
 
     def whoami(self) -> dict:

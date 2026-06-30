@@ -4,6 +4,7 @@ from __future__ import annotations
 import httpx
 
 from providers.base import BaseConnector, ModelInfo
+from utils.console import print_warning
 
 # ── Comprehensive pricing catalog (per 1M tokens, USD) ───────────────────────
 _CATALOG: dict[str, dict] = {
@@ -124,6 +125,12 @@ class AnthropicConnector(BaseConnector):
                     return results
         except Exception:
             pass
+        # Discovery failed or returned nothing usable. Fall back to the built-in
+        # catalog, but say so: a silent fallback hides drift from the user.
+        print_warning(
+            "Anthropic model discovery failed or was unavailable; using a built-in "
+            "fallback catalog. The model list and pricing may be out of date."
+        )
         return [ModelInfo(**m) for m in _FALLBACK_MODELS]
 
     def whoami(self) -> dict:

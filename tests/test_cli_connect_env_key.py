@@ -29,6 +29,22 @@ def test_connect_uses_cli_api_key_without_prompt(monkeypatch):
     gek.assert_not_called()
 
 
+def test_connect_env_key_echoes_source_without_leaking(monkeypatch, capsys):
+    """The env-source note names the variable, not its value, and never leaks the key."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-secret-12345")
+
+    with patch("cli.commands.connect.load_dotenv_once"), \
+         patch("cli.commands.connect.get_provider_api_key", return_value="sk-env-secret-12345"), \
+         patch("cli.commands.connect.svc_connect", return_value=_fake_account()), \
+         patch("cli.commands.connect.get_session", return_value=MagicMock()):
+        cmd_connect("openai", api_key="")
+
+    out = capsys.readouterr().out.lower()
+    assert "from environment" in out
+    assert "openai_api_key" in out                 # the variable name
+    assert "sk-env-secret-12345" not in out        # never the value
+
+
 def test_connect_uses_env_key_when_cli_missing(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env-valid")
 

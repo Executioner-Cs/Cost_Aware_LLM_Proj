@@ -5,7 +5,7 @@ from typing import Annotated
 from db.session import get_session
 from services.connect_service import connect as svc_connect
 from utils.console import console, print_error, print_success
-from utils.env import get_provider_api_key, load_dotenv_once
+from utils.env import get_provider_api_key, get_provider_env_var, load_dotenv_once
 
 
 def cmd_connect(
@@ -14,7 +14,7 @@ def cmd_connect(
         str,
         typer.Option(
             "--api-key",
-            help="API key (PAT). If omitted, uses .env/env var; otherwise prompts (cloud providers).",
+            help="API key (PAT). Prefer an env var or the secure prompt; an inline key is saved in your shell history. If omitted, uses .env/env var, otherwise prompts (cloud providers).",
             hide_input=True,
         ),
     ] = "",
@@ -36,6 +36,11 @@ def cmd_connect(
         if not key:
             load_dotenv_once()
             key = (get_provider_api_key(provider) or "").strip()
+            if key:
+                # Report the source (name only, never the value) so the user knows
+                # no prompt is coming and the key did not have to be pasted.
+                env_name = get_provider_env_var(provider) or "the environment"
+                typer.echo(f"Using {env_name} from environment (not shown).")
         if not key and not is_source:
             key = typer.prompt(f"{provider} API key", hide_input=True).strip()
         if not key and not is_source:

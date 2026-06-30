@@ -32,14 +32,17 @@ class SessionState:
 
     # Derived stats (refreshed after each mutating command)
     provider_count: int = 0
+    model_count: int = 0
     cache_enabled: bool = True
     monthly_budget: float = 0.0
     cost_this_session: float = 0.0
 
     def refresh_stats(self) -> None:
         from db.repositories.accounts import list_all
+        from db.repositories.models import list_enabled
         accounts = list_all(self.session)
         self.provider_count = len([a for a in accounts if a.status == "active"])
+        self.model_count = len(list_enabled(self.session))
         self.cache_enabled = self.config.get("cache", {}).get("enabled", True)
         self.monthly_budget = self.config.get("cost", {}).get("monthly_budget_usd", 0.0)
 

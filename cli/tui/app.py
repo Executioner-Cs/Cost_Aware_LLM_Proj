@@ -95,8 +95,10 @@ def bootstrap_state() -> SessionState:
         from db.session import get_session
         session = get_session(home / "orchestrator.db")
         from db.repositories.accounts import list_all
+        from db.repositories.models import list_enabled
         accounts = list_all(session)
         state.provider_count = len([a for a in accounts if a.status == "active"])
+        state.model_count = len(list_enabled(session))
     except Exception:
         pass
 
@@ -120,12 +122,14 @@ class StatusBar(Static):
     def __init__(self) -> None:
         super().__init__("")
         self._providers = 0
+        self._models = 0
         self._cache = True
         self._quality = "balanced"
         self._cost = 0.0
 
     def update_from_state(self, state) -> None:
         self._providers = state.provider_count
+        self._models = getattr(state, "model_count", 0)
         self._cache = state.cache_enabled
         self._quality = state.quality
         self._cost = state.cost_this_session
@@ -135,6 +139,7 @@ class StatusBar(Static):
         cache_str = "[green]cache ON[/green]" if self._cache else "[red]cache OFF[/red]"
         self.update(
             f"  [green]providers: {self._providers}[/green]"
+            f"   [green]models: {self._models}[/green]"
             f"   {cache_str}"
             f"   [cyan]quality: {self._quality}[/cyan]"
             f"   [dim]session cost: ${self._cost:.6f}[/dim]"
@@ -155,47 +160,67 @@ class SidePanel(Static):
     }
     """
 
+    # True until the first real activity arrives, so the placeholder is shown
+    # then replaced exactly once. on_mount always runs before any push().
+    _empty: bool = True
+
     def compose(self) -> ComposeResult:
         yield Label("[bold cyan]Recent Activity[/bold cyan]\n", id="side-title")
         yield RichLog(id="side-log", wrap=True, markup=True, highlight=False)
 
+    def on_mount(self) -> None:
+        self.query_one("#side-log", RichLog).write(_build_side_empty_state())
+
     def push(self, text: str) -> None:
-        self.query_one("#side-log", RichLog).write(text)
+        log = self.query_one("#side-log", RichLog)
+        if self._empty:
+            log.clear()
+            self._empty = False
+        log.write(text)
 
 
 # ── Main Orchestrator App ────────────────────────────────────────────────────
 
-_BANNER_LINES = [
-    "  ██████╗ ██████╗  ██████╗██╗  ██╗███████╗███████╗████████╗██████╗  █████╗ ████████╗ ██████╗ ██████╗ ",
-    " ██╔═══██╗██╔══██╗██╔════╝██║  ██║██╔════╝██╔════╝╚══██╔══╝██╔══██╗██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗",
-    " ██║   ██║██████╔╝██║     ███████║█████╗  ███████╗   ██║   ██████╔╝███████║   ██║   ██║   ██║██████╔╝",
-    " ██║   ██║██╔══██╗██║     ██╔══██║██╔══╝  ╚════██║   ██║   ██╔══██╗██╔══██║   ██║   ██║   ██║██╔══██╗",
-    " ╚██████╔╝██║  ██║╚██████╗██║  ██║███████╗███████║   ██║   ██║  ██║██║  ██║   ██║   ╚██████╔╝██║  ██║",
-    "  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝",
+# In-shell getting-started path. Commands are exactly what the dispatcher
+# accepts at the `orchestrator >` prompt (no `orchestrator` prefix), so the
+# card never advertises something that will not run.
+_GETTING_STARTED = [
+    ("1", "Connect a source", "connect ollama"),
+    ("2", "Create a task set", "benchmark create my-tasks"),
+    ("3", "Run a benchmark", "benchmark run my-tasks"),
+    ("4", "Route a prompt", 'route "your prompt"'),
 ]
-
-_BANNER_GRADIENT = (
-    "bright_cyan bold",
-    "cyan bold",
-    "bright_blue bold",
-    "blue bold",
-    "magenta bold",
-    "bright_magenta bold",
-)
 
 
 def _build_welcome_text() -> Text:
+    """Concise launch card: a one-line brand, the value prop, and a numbered
+    getting-started path. The visual weight goes to what the user should do
+    next, not to a large banner. The full brand also lives in the Header."""
     t = Text()
-    for i, line in enumerate(_BANNER_LINES):
-        t.append(line + "\n", style=_BANNER_GRADIENT[i % len(_BANNER_GRADIENT)])
-    t.append("\n")
-    t.append("Type ", style="dim")
+    t.append("Orchestrator", style="bold bright_cyan")
+    t.append("   local-first model routing and benchmarking workbench\n\n", style="dim")
+
+    t.append("Get started\n", style="bold")
+    for num, label, command in _GETTING_STARTED:
+        t.append(f"  {num}  ", style="bright_cyan")
+        t.append(f"{label:<18}", style="white")
+        t.append(f"{command}\n", style="bold")
+
+    t.append("\nType ", style="dim")
     t.append("help", style="bold dim")
-    t.append(" to see available commands.  Type ", style="dim")
-    t.append("quit", style="bold dim")
-    t.append(" or press ", style="dim")
+    t.append(" for all commands     ", style="dim")
     t.append("Ctrl+Q", style="bold dim")
-    t.append(" to exit.\n", style="dim")
+    t.append(" to quit\n", style="dim")
+    return t
+
+
+def _build_side_empty_state() -> Text:
+    """Guiding empty state for the Recent Activity panel, shown until the first
+    real command result lands so the sidebar is never a dead box."""
+    t = Text()
+    t.append("No activity yet.\n", style="bold dim")
+    t.append("Connect a source to begin.\n\n", style="dim")
+    t.append("Routes, benchmarks, and\ntraces will appear here.\n", style="dim")
     return t
 
 
@@ -208,8 +233,10 @@ class OrchestratorApp(App):
     SUB_TITLE = "Cost-Aware LLM Router"
 
     BINDINGS = [
-        Binding("ctrl+q", "quit", "Quit", priority=True),
-        Binding("ctrl+l", "clear_output", "Clear", show=True),
+        # key_display spells out "Ctrl+" so the footer reads clearly instead of
+        # the cryptic caret notation (^Q) that many users do not recognise.
+        Binding("ctrl+q", "quit", "Quit", priority=True, key_display="Ctrl+Q"),
+        Binding("ctrl+l", "clear_output", "Clear", show=True, key_display="Ctrl+L"),
         Binding("escape", "clear_input", "Clear Input", show=False),
         Binding("ctrl+c", "clear_input", "Clear Input", show=False, priority=True),
         Binding("up",     "history_prev", "Prev",  show=False),
@@ -234,7 +261,7 @@ class OrchestratorApp(App):
             yield SidePanel()
         with Horizontal(id="input-area"):
             yield Label("[bold cyan]orchestrator >[/bold cyan]  ", id="prompt-label")
-            yield Input(placeholder="orchestrator > type a command…", id="cmd-input")
+            yield Input(placeholder="type a command. try: help, connect, route, benchmark", id="cmd-input")
         yield Footer()
 
     # ── On mount ─────────────────────────────────────────────────────────────

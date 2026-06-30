@@ -11,12 +11,14 @@ build/
 
 # Virtual environments
 .venv/
+.venv-local-demo/
 venv/
 env/
 
 # Orchestrator runtime
 .orchestrator/
 .orchestrator-preview/
+.orchestrator-demo-home/
 *.db
 *.db-journal
 

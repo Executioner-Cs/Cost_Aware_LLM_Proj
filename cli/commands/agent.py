@@ -24,6 +24,7 @@ def _run_goal(
     from db.session import get_session
     from agent.loop import run_agent_loop
     from utils.console import console, print_error, print_warning
+    from utils.setup_ui import _supports_unicode_art
 
     session = None
     try:
@@ -34,7 +35,9 @@ def _run_goal(
             "sandbox path and run_shell/run_python stay off unless you enable them, but network "
             "access is NOT isolated. Review the goal and your sandbox_root before running."
         )
-        with console.status("[cyan]Agent running…"):
+        # ASCII fallback so the spinner does not mojibake on non-UTF consoles.
+        ellipsis_char = "…" if _supports_unicode_art() else "..."
+        with console.status(f"[cyan]Agent running{ellipsis_char}"):
             final, _msgs = run_agent_loop(
                 session,
                 goal,

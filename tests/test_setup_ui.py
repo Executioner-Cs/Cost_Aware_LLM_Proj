@@ -37,6 +37,33 @@ def test_init_banner_does_not_overclaim(monkeypatch):
 
 def test_init_success_panel_does_not_claim_vector_store(monkeypatch, tmp_path):
     out = _render(monkeypatch, setup_ui.render_init_success_panel, tmp_path)
-    assert "qdrant" not in out
-    assert "vector" not in out
+    for word in ("semantic", "vector", "embedding", "qdrant", "download"):
+        assert word not in out, f"init success panel still claims '{word}'"
+
+
+def test_init_success_panel_ascii_fallback_uses_plain_ellipsis(monkeypatch, tmp_path):
+    # On consoles without unicode support (legacy cp1252, captured pipes), the
+    # success panel must not emit a unicode ellipsis that mojibakes to a broken
+    # glyph. It falls back to ASCII "..." instead.
+    monkeypatch.setattr(setup_ui, "_supports_unicode_art", lambda: False)
+    out = _render(monkeypatch, setup_ui.render_init_success_panel, tmp_path)
+    assert "…" not in out
+    assert "launching orchestrator shell..." in out
+
+
+def test_init_success_panel_unicode_uses_real_ellipsis(monkeypatch, tmp_path):
+    monkeypatch.setattr(setup_ui, "_supports_unicode_art", lambda: True)
+    out = _render(monkeypatch, setup_ui.render_init_success_panel, tmp_path)
+    assert "…" in out
+    assert "shell..." not in out  # unicode path must not also emit the ASCII form
+
+
+def test_init_success_panel_ok_glyph_switches_with_unicode(monkeypatch, tmp_path):
+    # The check glyph and the ellipsis share one capability gate; cover the glyph too.
+    monkeypatch.setattr(setup_ui, "_supports_unicode_art", lambda: False)
+    out_ascii = _render(monkeypatch, setup_ui.render_init_success_panel, tmp_path)
+    monkeypatch.setattr(setup_ui, "_supports_unicode_art", lambda: True)
+    out_unicode = _render(monkeypatch, setup_ui.render_init_success_panel, tmp_path)
+    assert "+ setup complete" in out_ascii
+    assert "✓ setup complete" in out_unicode
 

@@ -197,3 +197,91 @@ def test_route_benchmarked_policy_bypasses_exact_cache(populated_session):
         # benchmarked must bypass the cache even though an entry exists.
         bypass = route(RouteRequest(prompt="hi", policy="benchmarked"), session)
         assert bypass.cache_hit is False
+
+
+# --------------------------------------------------------------------------- #
+# Constraint-aware Auto preset through the full pipeline.
+# --------------------------------------------------------------------------- #
+
+def _add_balanced_model(session):
+    from datetime import datetime, timezone
+    session.add(ModelRegistry(
+        id="m-bal", account_id="acc-1", provider="openai", external_model_id="gpt-4o",
+        display_name="GPT-4o", tier="balanced", context_window=128_000,
+        cost_per_1m_input=2.50, cost_per_1m_output=10.00,
+        supports_json=1, supports_tools=1, supports_vision=1, enabled=1,
+        discovered_at=datetime.now(timezone.utc).isoformat(),
+    ))
+
+
+def test_route_auto_selects_above_floor(populated_session):
+    session, tmp_path = populated_session
+    _add_balanced_model(session)                 # balanced, pricier than gpt-4o-mini (small)
+    session.commit()
+
+    with (
+        patch("core.router.get_home", return_value=tmp_path),
+        patch("core.router.load_config", return_value={"cache": {"enabled": False}}),
+    ):
+        from core.router import route
+        # Default route for a reasoning task still picks the cheapest capable model,
+        # which is the small one (behavior preserved).
+        default = route(RouteRequest(prompt="x", task_type="reasoning", dry_run=True), session)
+        assert default.model_id == "gpt-4o-mini"
+        # Auto floors a reasoning task at 'balanced', so it skips the small model.
+        auto = route(RouteRequest(prompt="x", task_type="reasoning", dry_run=True, policy="auto"), session)
+        assert auto.model_id == "gpt-4o"
+        assert auto.route_explanation and "Auto" in auto.route_explanation
+
+
+def test_route_auto_uses_scorecards_through_pipeline(populated_session):
+    session, tmp_path = populated_session
+    _add_balanced_model(session)
+    _add_premium_model(session)                  # small tier, pricey
+    # The premium small model earns a high score; the balanced model does not.
+    _add_scorecard(session, "premium", 1.0)
+    session.commit()
+
+    with (
+        patch("core.router.get_home", return_value=tmp_path),
+        patch("core.router.load_config", return_value={"cache": {"enabled": False}}),
+    ):
+        from core.router import route
+        # 'simple' floors at 'small', so the high-scoring small premium model wins on
+        # evidence over the cheaper unscored small model: Auto consumes scorecards.
+        auto = route(RouteRequest(prompt="hi", task_type="simple", dry_run=True, policy="auto"), session)
+        assert auto.model_id == "premium"
+
+
+def test_route_auto_policy_bypasses_exact_cache(populated_session):
+    session, tmp_path = populated_session
+    from providers.base import GenerateResult
+    fake = GenerateResult(
+        response_text="X", input_tokens=10, output_tokens=5,
+        latency_ms=100, model_id="gpt-4o-mini", provider="openai",
+    )
+    cfg = {"cache": {"enabled": True, "mode": "exact"}}
+    with (
+        patch("core.router.get_home", return_value=tmp_path),
+        patch("core.router.load_config", return_value=cfg),
+        patch("core.router.decrypt", return_value="fake-api-key"),
+        patch("providers.openai.adapter.OpenAIAdapter.generate", return_value=fake),
+    ):
+        from core.router import route
+        assert route(RouteRequest(prompt="hi"), session).cache_hit is False   # miss -> stores
+        assert route(RouteRequest(prompt="hi"), session).cache_hit is True    # default hit
+        # auto must bypass the cache even though a default-policy entry exists.
+        bypass = route(RouteRequest(prompt="hi", policy="auto"), session)
+        assert bypass.cache_hit is False
+
+
+def test_route_fast_preset_emits_planned_note(populated_session):
+    session, tmp_path = populated_session
+    with (
+        patch("core.router.get_home", return_value=tmp_path),
+        patch("core.router.load_config", return_value={"cache": {"enabled": False}}),
+        patch("core.router.print_warning") as warn,
+    ):
+        from core.router import route
+        route(RouteRequest(prompt="hi", dry_run=True, policy="fast"), session)
+    assert any("latency-aware" in str(c.args[0]) for c in warn.call_args_list)

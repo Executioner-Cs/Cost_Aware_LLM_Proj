@@ -35,10 +35,67 @@ TASK_CAPABILITIES: dict[str, dict] = {
     "simple": {},
 }
 
+# task_type → minimum tier the Auto preset requires (its quality floor). Simple
+# work may run on a small model; tasks where a weak model commonly fails (JSON
+# extraction, reasoning, vision, tool use) are floored at 'balanced'. Auto never
+# floors at 'large', so it does not become an always-biggest-model mode; raising
+# the floor to 'large' is the job of the 'best'/'deep' presets, not Auto.
+TASK_QUALITY_FLOOR: dict[str, str] = {
+    "simple": "small",
+    "json_extract": "balanced",
+    "reasoning": "balanced",
+    "vision": "balanced",
+    "tools": "balanced",
+}
+
+
+def auto_floor_tier(task_type: str, quality: str = "balanced") -> str:
+    """The Auto preset's effective quality floor: the higher of the task's floor and
+    the quality knob's minimum tier.
+
+    So a complex task is never floored below 'balanced', and an explicit
+    ``--quality best`` raises the floor to 'large' rather than being silently
+    ignored. A lower quality knob ('cheap') never drops the floor below the task's.
+    """
+    task_floor = TASK_QUALITY_FLOOR.get(task_type, "small")
+    quality_floor = QUALITY_MIN_TIER.get(quality, "small")
+    return task_floor if TIER_ORDER[task_floor] >= TIER_ORDER[quality_floor] else quality_floor
+
 
 def _cost_score(m: ModelRegistry) -> float:
     """Combined input+output price proxy used to rank cheapest-first."""
     return (m.cost_per_1m_input or 0.0) + (m.cost_per_1m_output or 0.0)
+
+
+def capable_models(
+    models: list[ModelRegistry],
+    task_type: str,
+    input_tokens: int = 0,
+) -> list[ModelRegistry]:
+    """Enabled models meeting capability and context constraints, cheapest-first,
+    across ALL tiers.
+
+    This is the candidate pool for task-aware policies (the Auto preset), which
+    apply their own tier floor instead of the quality min/max tier range that
+    ``candidates`` enforces. It does not look at the quality knob at all. The
+    per-model checks are the same ones ``candidates`` historically applied inline.
+    """
+    caps = TASK_CAPABILITIES.get(task_type, {})
+    pool: list[ModelRegistry] = []
+    for m in models:
+        if not m.enabled:
+            continue
+        if caps.get("supports_json") and not m.supports_json:
+            continue
+        if caps.get("supports_vision") and not m.supports_vision:
+            continue
+        if caps.get("supports_tools") and not m.supports_tools:
+            continue
+        if m.context_window and m.context_window < input_tokens * 1.2:
+            continue
+        pool.append(m)
+    pool.sort(key=_cost_score)
+    return pool
 
 
 def candidates(
@@ -55,29 +112,12 @@ def candidates(
       - tier within quality range
       - capability flags required by task_type
     """
-    caps = TASK_CAPABILITIES.get(task_type, {})
     min_tier = TIER_ORDER[QUALITY_MIN_TIER.get(quality, "small")]
     max_tier = TIER_ORDER[QUALITY_MAX_TIER.get(quality, "large")]
-
-    pool: list[ModelRegistry] = []
-    for m in models:
-        if not m.enabled:
-            continue
-        tier_val = TIER_ORDER.get(m.tier, 99)
-        if tier_val < min_tier or tier_val > max_tier:
-            continue
-        if m.context_window and m.context_window < input_tokens * 1.2:
-            continue
-        if caps.get("supports_json") and not m.supports_json:
-            continue
-        if caps.get("supports_vision") and not m.supports_vision:
-            continue
-        if caps.get("supports_tools") and not m.supports_tools:
-            continue
-        pool.append(m)
-
-    pool.sort(key=_cost_score)
-    return pool
+    return [
+        m for m in capable_models(models, task_type, input_tokens)
+        if min_tier <= TIER_ORDER.get(m.tier, 99) <= max_tier
+    ]
 
 
 def select(

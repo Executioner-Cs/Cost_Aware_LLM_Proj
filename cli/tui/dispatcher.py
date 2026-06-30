@@ -73,7 +73,9 @@ HELP_TEXT = """\
   [bold]route[/bold] [cyan]<prompt>[/cyan] [--task T] [--quality Q] [--policy P] [--task-set S] [--dry-run]
       --task    : simple | json_extract | reasoning | vision | tools
       --quality : cheap | balanced (default) | best
-      --policy  : default | cheapest | privacy-first | quality-first | benchmarked
+      --policy  : auto | fast | best | cheap | local | private | deep | benchmarked
+                  (no --policy = cheapest-capable default; auto adds a per-task quality
+                   floor, which --quality best raises to the top tier)
       --task-set: scope the benchmarked policy to one task set's scorecards
   [bold]quality[/bold] [cyan]<cheap|balanced|best>[/cyan]
       Set the default quality tier for this session.

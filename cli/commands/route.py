@@ -8,7 +8,7 @@ def cmd_route(
     task: Annotated[Optional[str], typer.Option("--task", "-t", help="Override task type")] = None,
     quality: Annotated[str, typer.Option("--quality", "-q", help="cheap | balanced | best")] = "balanced",
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show routing plan without calling provider")] = False,
-    policy: Annotated[Optional[str], typer.Option("--policy", "-p", help="default | cheapest | privacy-first | quality-first | benchmarked")] = None,
+    policy: Annotated[Optional[str], typer.Option("--policy", "-p", help="auto | fast | best | cheap | local | private | deep | benchmarked (no policy = cheapest-capable default)")] = None,
     task_set: Annotated[Optional[str], typer.Option("--task-set", help="Scope the benchmarked policy to one task set's scorecards")] = None,
 ):
     """Route a prompt to the optimal LLM based on task and cost."""

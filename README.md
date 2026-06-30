@@ -18,7 +18,7 @@ This README separates what works today from what is planned. Planned items are l
 8. [Usage](#usage)
 9. [Cache status](#cache-status)
 10. [Security status](#security-status)
-11. [Future direction (V2 roadmap)](#future-direction-v2-roadmap)
+11. [Planned direction](#planned-direction)
 12. [Development](#development)
 
 ---
@@ -45,7 +45,7 @@ This README separates what works today from what is planned. Planned items are l
 
 Developers are guessing which model to use. Public leaderboards measure generic benchmarks, not your tasks. Provider marketing is not neutral. The right model depends on your actual tasks, your budget, your privacy needs, your latency tolerance, and whether you need reliable JSON or tool calls.
 
-The honest way to choose is to run a representative set of your own tasks across candidate models, measure the results locally, and let those measurements drive routing. Orchestrator CLI exists to make that loop cheap, private, and repeatable on your own machine. See [docs/product/PRODUCT_DIRECTION.md](docs/product/PRODUCT_DIRECTION.md) for the full positioning.
+The honest way to choose is to run a representative set of your own tasks across candidate models, measure the results locally, and let those measurements drive routing. Orchestrator CLI exists to make that loop cheap, private, and repeatable on your own machine. See [docs/product/OVERVIEW.md](docs/product/OVERVIEW.md) for a product overview.
 
 ## Core concepts
 
@@ -188,7 +188,7 @@ orchestrator route "..." --policy privacy-first
 orchestrator route "..." --policy benchmarked --task-set my-tasks
 ```
 
-Grading is deterministic (`exact`, `contains`, `json_valid`); `contains`/`exact` require `--expected`. The `benchmarked` policy prefers the highest-scoring capable model and falls back to cheapest when a model has no scorecard. See [docs/roadmap/BRANCH_ROADMAP.md](docs/roadmap/BRANCH_ROADMAP.md) for what is still planned.
+Grading is deterministic (`exact`, `contains`, `json_valid`); `contains`/`exact` require `--expected`. The `benchmarked` policy prefers the highest-scoring capable model and falls back to cheapest when a model has no scorecard. See [CHANGELOG.md](CHANGELOG.md) for what has shipped and what is planned.
 
 ## Cache status
 
@@ -226,22 +226,18 @@ Known limitations (still true):
 
 API keys are encrypted at rest with Fernet and are never printed. Treat tool outputs, file contents, and provider responses as untrusted input.
 
-## Future direction (V2 roadmap)
+## Planned direction
 
-The product is moving from a cost-aware router to a benchmark-driven routing workbench. Work is sequenced one concern per branch. As of 0.2, items 6 through 10 (Model Sources, local/OpenAI-compatible sources, the policy engine, benchmarks and scorecards, and the TUI workbench), the P0 agent-safety hardening (item 2), and scorecard-aware routing have landed; see [CHANGELOG.md](CHANGELOG.md). Item 11 (`semantic-cache-v2`) is deferred. Summary order (full detail in [docs/roadmap/BRANCH_ROADMAP.md](docs/roadmap/BRANCH_ROADMAP.md)):
+Orchestrator CLI is evolving into a benchmark-driven routing workbench. Release 0.2 already includes model sources (cloud, Ollama, and OpenAI-compatible), the routing policy engine, benchmarks and scorecards, opt-in scorecard-aware routing, and the agent-safety hardening described above; see [CHANGELOG.md](CHANGELOG.md) for per-release detail.
 
-1. `refactor/slim-deps-and-cache-tiers`: slim default dependencies; exact cache default; semantic optional. (Cache tier code and the optional-dependency extras have landed.)
-2. `security/p0-agent-safety`: fix P0 agent-runtime security before any promotion of agent mode.
-3. `docs/v2-product-direction`: docs and Claude support system aligned to V2.
-4. `fix/model-registry-integrity`: registry correctness and integrity.
-5. `refactor/config-routing-seam`: clean the router-to-config coupling.
-6. `architecture/model-source-abstraction`: introduce Model Sources, wrap existing providers.
-7. `sources/openai-compatible-and-ollama`: add local and OpenAI-compatible sources.
-8. `routing/policy-engine-v1`: hard filters, scoring, policies, fallback chains, explanations.
-9. `evals/benchmark-scorecards-v1`: Task Sets, Benchmark Runs, scoring, Scorecards that feed routing.
-10. `design/tui-v2-workbench-experience`: TUI around sources, benchmarks, scorecards, routing, traces.
-11. `cache/semantic-cache-v2`: a lighter semantic cache to replace the removed v1 (candidates: sqlite-vec, provider embeddings, FastEmbed). Not implemented.
-12. `agent/safe-agent-mode`: re-enable and promote agent mode only after P0 is fixed.
+Planned, in broad terms (not yet implemented):
+
+* A lighter, optional semantic cache to complement the exact cache.
+* Source-qualified model identity so two endpoints exposing the same model name do not collide.
+* Latency and reliability as live routing dimensions once benchmarks record them.
+* Continued hardening before the experimental agent mode is promoted.
+
+See [docs/product/OVERVIEW.md](docs/product/OVERVIEW.md) for the current-versus-planned summary.
 
 ## Development
 
@@ -254,4 +250,4 @@ pytest
 
 `[dev]` alone installs only the test tools (`pytest`, `pytest-asyncio`, `pytest-mock`); combine it with `[all]` to run the whole suite. The test suite covers the task classifier, cost estimator, model selector, exact cache, router integration (with mocked providers), provider adapters, connect flows, optional-dependency packaging, and an end-to-end CLI simulation under `tests/tests_e2e_cli_simulation/`. There is no lint, format, or typecheck command in this repo.
 
-Architecture, product direction, and the branch roadmap live under [docs/](docs/). The operating guide for Claude Code in this repo is at [.claude/CLAUDE.md](.claude/CLAUDE.md).
+A product overview is in [docs/product/OVERVIEW.md](docs/product/OVERVIEW.md), architecture notes in [docs/architecture/](docs/architecture/), and release history in [CHANGELOG.md](CHANGELOG.md).

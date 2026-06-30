@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 # Base stays light: routing, the exact-match cache, persistence, and the CLI
 # run on these alone. Provider SDKs and the TUI are optional extras, loaded
 # lazily only when actually used (a future semantic cache will be opt-in too).
-# See README install section and docs/roadmap/BRANCH_ROADMAP.md (slim-deps branch).
+# See the README install section for the optional extras.
 dependencies = [
     "typer>=0.12",
     "pydantic>=2.0",

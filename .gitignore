@@ -46,3 +46,13 @@ CLAUDE.local.md
 .claude/tmp/
 .claude/agents/
 .claude/skills/
+
+# Private strategy / internal process docs and playbooks (kept local, never
+# committed). Public product info lives in README.md and docs/product/OVERVIEW.md.
+*.local.md
+private-docs/
+skills/
+docs/roadmap/BRANCH_ROADMAP.md
+docs/product/MVP_V2_SCOPE.md
+docs/product/PRODUCT_DIRECTION.md
+docs/architecture/decisions/ADR-001-LOCAL_FIRST_BENCHMARK_ROUTING_WORKBENCH.md

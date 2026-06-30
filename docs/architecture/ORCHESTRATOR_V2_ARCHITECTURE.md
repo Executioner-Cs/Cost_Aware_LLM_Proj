@@ -18,7 +18,7 @@ Routing pipeline today (`core/router.py`): normalize, classify, build cache back
 
 Cache today (`core/cache.py`): `get_cache` returns `NoOpCache` (disabled or off) or `ExactCache` (default, SQLite only, TTL on read). `cache.mode = "semantic"` raises a clear error: the legacy semantic backend was removed.
 
-Known coupling debt: `core/router.py` pulls config via `services.init_service`. Do not deepen it. It is slated for `refactor/config-routing-seam`.
+Known coupling debt: `core/router.py` pulls config via `services.init_service`. Do not deepen it. It is slated for a future config-routing refactor.
 
 ## Future architecture (target)
 
@@ -31,7 +31,7 @@ Target concepts (status noted per concept):
 * RoutingPolicy: a named policy of hard filters, a scoring formula, and a fallback chain.
 * TaskSet: a developer's representative tasks with expected outputs or graders. Status: implemented as the `task_sets` + `benchmark_tasks` tables (`orchestrator benchmark create` / `add-task`).
 * BenchmarkRun: an execution of a TaskSet across selected models producing measurements. Status: implemented as the `benchmark_runs` table (`orchestrator benchmark run`).
-* Scorecard: per-model local results that will feed routing. Status: implemented as the `scorecards` table with deterministic scoring only (exact / contains / json_valid), recording pass rate, average latency, and average cost. Latency/reliability as routing dimensions and any LLM-as-judge are not in v1. Benchmark-driven routing (the product's core promise) is wired in the next branch `routing/scorecard-aware-routing`: the policy engine will prefer models that scored well on the relevant task set, with an explicit fallback when no scorecard exists, so routing decisions are grounded in the user's own measurements rather than provider marketing.
+* Scorecard: per-model local results that will feed routing. Status: implemented as the `scorecards` table with deterministic scoring only (exact / contains / json_valid), recording pass rate, average latency, and average cost. Latency/reliability as routing dimensions and any LLM-as-judge are not in v1. Benchmark-driven routing is wired in a subsequent change: the policy engine prefers models that scored well on the relevant task set, with an explicit fallback when no scorecard exists, so routing decisions are grounded in the user's own measurements.
 * RoutingDecision: the chosen model plus the reasons it was chosen.
 * FallbackPlan: the ordered alternatives if the primary fails a filter or a call.
 * ExecutionTrace: a richer trace of a route or agent run, beyond today's flat `traces` row.
@@ -45,15 +45,15 @@ Target routing flow:
 ## Cache tiers (current and forward)
 
 * Exact-match SQLite cache stays the default and, today, the only implemented cache. Slim, single-store, TTL on read.
-* The legacy heavy semantic cache (embeddings + Qdrant) was removed. `cache/semantic-cache-v2` will build a lighter replacement (candidates: sqlite-vec, provider embeddings, FastEmbed). It will stay optional and never become the default. Not implemented.
+* The legacy heavy semantic cache (embeddings + Qdrant) was removed. A future lighter semantic cache may replace it (candidates: sqlite-vec, provider embeddings, FastEmbed). It would stay optional and never become the default. Not implemented.
 
 ## Safe agent mode (later)
 
-Agent mode stays experimental until `security/p0-agent-safety` lands. At minimum that branch enforces or removes `network_disabled`, hardens sandbox confinement, and confirms shell gating. `agent/safe-agent-mode` promotes it only after that.
+Agent mode stays experimental until the agent-safety hardening lands. At minimum that work enforces or removes `network_disabled`, hardens sandbox confinement, and confirms shell gating. Agent mode is promoted only after that.
 
 ## Migration path
 
-The migration is incremental and behavior-preserving at each step. See `docs/roadmap/BRANCH_ROADMAP.md` for the branch sequence and definitions of done. Key ordering constraints:
+The migration is incremental and behavior-preserving at each step. Key ordering constraints:
 
 * Slim dependencies and stabilize the cache before building new subsystems.
 * Fix agent safety and registry integrity before feature growth.

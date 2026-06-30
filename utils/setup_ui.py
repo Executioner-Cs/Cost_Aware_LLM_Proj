@@ -67,12 +67,12 @@ def render_init_banner() -> None:
         banner.append(line + "\n", style=style + " bold")
 
     subtitle = Text(
-        "Cost-aware multi-provider orchestration with semantic caching + agent tools",
+        "Local-first AI routing and benchmarking workbench",
         style="bright_white",
     )
     tips = Text(
-        "Setup is preparing config, database, vector cache, and embeddings.\n"
-        "This runs locally on your machine. First run may download model assets.",
+        "Setup is preparing your local config and database.\n"
+        "This runs locally on your machine.",
         style="white",
     )
     body = Text()
@@ -99,7 +99,6 @@ def render_init_success_panel(home: Path) -> None:
     lines.append(f"{ok} Setup complete.\n", style="bold green")
     lines.append(f"Config   : {home / 'config.toml'}\n", style="bright_white")
     lines.append(f"Database : {home / 'orchestrator.db'}\n", style="bright_white")
-    lines.append(f"Vectors  : {home / 'qdrant'}\n", style="bright_white")
     lines.append("\nLaunching orchestrator shell…\n", style="bold bright_cyan")
 
     panel = Panel(

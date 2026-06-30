@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from db.models import Base, ModelRegistry
+from db.models import Base, ModelRegistry, ConnectedAccount
 from db.repositories.models import upsert_models, list_enabled, get_by_external_id
 
 
@@ -120,3 +120,67 @@ def test_no_db_unique_constraint_create_all_myth():
     assert {"provider", "external_model_id"} <= cols
     uniques = [c for c in ModelRegistry.__table__.constraints if c.__class__.__name__ == "UniqueConstraint"]
     assert uniques == []
+
+
+# --- Source-endpoint-qualified identity ------------------------------------ #
+
+def _account(session, account_id, provider, *, base_url=None, source_type="cloud"):
+    acct = ConnectedAccount(
+        id=account_id,
+        provider=provider,
+        auth_method="none",
+        status="active",
+        connected_at=datetime.now(timezone.utc).isoformat(),
+        source_type=source_type,
+        base_url=base_url,
+    )
+    session.add(acct)
+    session.commit()
+    return acct
+
+
+def test_two_local_endpoints_same_model_stay_distinct(session):
+    # Two Ollama endpoints share provider="ollama" and model "llama3" but are
+    # different sources (different base_url). They must NOT collapse.
+    _account(session, "ll-a", "ollama", base_url="http://localhost:11434", source_type="local")
+    _account(session, "ll-b", "ollama", base_url="http://localhost:21434", source_type="local")
+    upsert_models(session, [_model("ollama", "llama3", account_id="ll-a")])
+    upsert_models(session, [_model("ollama", "llama3", account_id="ll-b")])
+
+    rows = session.query(ModelRegistry).filter_by(provider="ollama", external_model_id="llama3").all()
+    assert len(rows) == 2
+    assert {r.account_id for r in rows} == {"ll-a", "ll-b"}
+
+
+def test_resync_one_local_endpoint_is_idempotent(session):
+    # Re-syncing the SAME local endpoint updates in place, no duplicate.
+    _account(session, "ll-a", "ollama", base_url="http://localhost:11434/", source_type="local")
+    upsert_models(session, [_model("ollama", "llama3", account_id="ll-a", cost_in=1.0)])
+    upsert_models(session, [_model("ollama", "llama3", account_id="ll-a", cost_in=2.0)])
+    rows = session.query(ModelRegistry).filter_by(provider="ollama", external_model_id="llama3").all()
+    assert len(rows) == 1
+    assert rows[0].cost_per_1m_input == 2.0  # updated in place (trailing-slash normalized)
+
+
+def test_same_cloud_provider_same_model_still_collapses(session):
+    # Two cloud accounts of the same provider (no base_url) must still collapse.
+    _account(session, "oa-1", "openai")
+    _account(session, "oa-2", "openai")
+    upsert_models(session, [_model("openai", "gpt-4o-mini", account_id="oa-1")])
+    upsert_models(session, [_model("openai", "gpt-4o-mini", account_id="oa-2")])
+    rows = session.query(ModelRegistry).filter_by(provider="openai", external_model_id="gpt-4o-mini").all()
+    assert len(rows) == 1
+    assert rows[0].account_id == "oa-1"  # ownership preserved
+
+
+def test_list_enabled_keeps_distinct_local_endpoints(session):
+    # Routing candidates must include both local endpoints, not collapse them.
+    _account(session, "ll-a", "ollama", base_url="http://localhost:11434", source_type="local")
+    _account(session, "ll-b", "ollama", base_url="http://localhost:21434", source_type="local")
+    upsert_models(session, [_model("ollama", "llama3", account_id="ll-a")])
+    upsert_models(session, [_model("ollama", "llama3", account_id="ll-b")])
+
+    enabled = list_enabled(session)
+    llama_rows = [m for m in enabled if m.external_model_id == "llama3"]
+    assert len(llama_rows) == 2
+    assert {m.account_id for m in llama_rows} == {"ll-a", "ll-b"}

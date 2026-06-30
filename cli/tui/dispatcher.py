@@ -53,8 +53,9 @@ HELP_TEXT = """\
 [bold cyan]Orchestrator workbench[/bold cyan]  benchmark models on your own tasks, then route to the one that earned it.
 
 [bold]Sources[/bold]
-  [bold]connect[/bold] [cyan]<provider>[/cyan] [--api-key KEY] [--base-url URL]
-      Cloud: anthropic | openai | groq | gemini  (needs --api-key)
+  [bold]connect[/bold]                       Open the Connect Center (pick a source).
+  [bold]connect[/bold] [cyan]<provider>[/cyan] [--base-url URL]
+      Cloud: anthropic | openai | groq | gemini  (key via env var or secure prompt)
       Local: connect ollama (keyless) | connect openai-compatible --base-url URL
   [bold]accounts[/bold] list | sync [cyan]<id>[/cyan] | disconnect [cyan]<id>[/cyan]
       Manage connected sources.
@@ -250,40 +251,123 @@ class Dispatcher:
 
         return renderables
 
+    # The Connect Center: a product-grade source picker, shown for a bare
+    # `connect`. Honest about how cloud keys are handled (no inline paste, no
+    # fake browser sign-in) and which sources are keyless. The source names
+    # listed here must stay in sync with _LOCAL_SOURCES below and the cloud
+    # providers in connect_service._PROVIDER_CONNECTOR_MAP.
+    _CONNECT_CENTER = (
+        "[bold cyan]Connect a source[/bold cyan]\n\n"
+        "[bold]Local[/bold] [dim](no cloud key)[/dim]\n"
+        "  [bold]ollama[/bold]             Use your local Ollama models. No cloud key required.\n"
+        "  [bold]openai-compatible[/bold]  Any local or custom OpenAI-style endpoint (--base-url URL).\n\n"
+        "[bold]Cloud[/bold] [dim](secure terminal connection)[/dim]\n"
+        "  [bold]openai[/bold], [bold]anthropic[/bold], [bold]gemini[/bold], [bold]groq[/bold]\n\n"
+        "[dim]Cloud providers need an API key. Orchestrator reads it from your environment\n"
+        "(e.g. OPENAI_API_KEY) or a secure hidden prompt, never from shell history, and\n"
+        "stores it locally, encrypted. Browser/device sign-in is not offered.[/dim]\n\n"
+        "[bold]Try[/bold]\n"
+        "  [bold cyan]connect ollama[/bold cyan]\n"
+        "  [bold cyan]connect openai[/bold cyan]"
+    )
+
+    _LOCAL_SOURCES = {"ollama", "openai-compatible", "openai_compatible"}
+
     def _cmd_connect(self, args: list[str]) -> list[Any]:
-        import argparse, getpass
-        from services.connect_service import connect as svc_connect
+        # Bare `connect` opens the Connect Center rather than an argparse error.
+        if not args:
+            return [Panel(self._CONNECT_CENTER, title="Connect Center", border_style="cyan")]
 
         p = _silent_parser("connect")
         p.add_argument("provider")
         p.add_argument("--api-key", default=None)
         p.add_argument("--base-url", dest="base_url", default=None)
-
         try:
             ns = p.parse_args(args)
         except SystemExit:
-            return [Text("Usage: connect <provider> [--api-key KEY] [--base-url URL]", style="yellow")]
+            return [Text("Usage: connect <provider> [--base-url URL]   (type `connect` for options)", style="yellow")]
 
-        api_key = ns.api_key
-        # Local sources can be keyless (Ollama) or key-via-base_url (OpenAI-compatible);
-        # only cloud providers must have a key supplied inline (no interactive prompt here).
-        is_local = ns.provider.lower() in {"ollama", "openai-compatible", "openai_compatible"}
-        if not api_key and not is_local:
-            return [Text(
-                f"Please supply the key inline:  connect {ns.provider} --api-key sk-...",
-                style="yellow"
-            )]
+        provider = ns.provider.lower()
 
+        # Local sources are keyless (Ollama) or keyed via the endpoint; connect directly.
+        if provider in self._LOCAL_SOURCES:
+            return self._do_connect(provider, ns.api_key or "", ns.base_url)
+
+        # Cloud: an inline key still works but is gently discouraged (shell history).
+        if ns.api_key:
+            return self._do_connect(
+                provider, ns.api_key, ns.base_url,
+                tip=("Tip: an inline key is saved in your shell history. Next time set an "
+                     f"env var or use the secure prompt: orchestrator connect {provider}."),
+            )
+
+        # Cloud: prefer an environment key so the connection stays in-shell and silent.
+        from utils.env import load_dotenv_once, get_provider_api_key, get_provider_env_var
+        load_dotenv_once()
+        env_key = (get_provider_api_key(provider) or "").strip()
+        if env_key:
+            env_name = get_provider_env_var(provider) or "the environment"
+            return self._do_connect(
+                provider, env_key, ns.base_url,
+                note=f"Using {env_name} from environment (not shown).",
+            )
+
+        # Cloud, no key available: guide the user to a secure setup. Never inline paste.
+        return [self._secure_connect_guidance(provider)]
+
+    def _secure_connect_guidance(self, provider: str) -> Panel:
+        from utils.env import get_provider_env_var
+        env_name = get_provider_env_var(provider) or f"{provider.upper()}_API_KEY"
+        body = (
+            f"{provider} needs an API key. Avoid passing it inline, which would save it "
+            "in your shell history.\n\n"
+            "[bold]Secure options[/bold]\n"
+            f"  1. Set [bold]{env_name}[/bold] in your environment, then run  "
+            f"[bold cyan]connect {provider}[/bold cyan]\n"
+            f"  2. Run the secure hidden prompt in your terminal:  "
+            f"[bold cyan]orchestrator connect {provider}[/bold cyan]\n"
+            "     [dim]Your key is hidden as you type, never echoed, and stored locally encrypted.[/dim]\n\n"
+            f"[dim]Browser or device sign-in is not available for {provider}; "
+            "Orchestrator uses secure terminal setup instead.[/dim]"
+        )
+        return Panel(body, title=f"Connect {provider}", border_style="cyan")
+
+    def _do_connect(
+        self,
+        provider: str,
+        api_key: str,
+        base_url: str | None,
+        *,
+        note: str | None = None,
+        tip: str | None = None,
+    ) -> list[Any]:
+        # note/tip are only shown on success, so a failed connect never gets a
+        # misleading "Using env var" prefix or a "shell history" footer.
+        from services.connect_service import connect as svc_connect
+        from db.repositories.models import list_for_account
         try:
-            account = svc_connect(self.state.session, ns.provider, api_key or "", base_url=ns.base_url)
-            self.state.refresh_stats()
-            return [Text(
-                f"✓  Connected [bold]{ns.provider}[/bold] "
-                f"({account.display_name or 'account'}, id: {account.id[:8]}…)",
-                style="bold green"
-            )]
+            account = svc_connect(self.state.session, provider, api_key, base_url=base_url)
         except Exception as exc:
-            return [Text(f"Error: {exc}", style="bold red")]
+            return [Text(f"Could not connect {provider}: {exc}", style="bold red")]
+        self.state.refresh_stats()
+        count = len(list_for_account(self.state.session, account.id))
+        where = f" at {account.base_url}" if account.base_url else ""
+        stored = (
+            "Credentials stored locally, encrypted."
+            if account.encrypted_token else "Local source, no cloud key stored."
+        )
+        plural = "s" if count != 1 else ""
+        out: list[Any] = []
+        if note:
+            out.append(Text(note, style="dim"))
+        out.append(Text(
+            f"✓  Connected {provider}{where}. {count} model{plural} discovered "
+            f"(id: {account.id[:8]}…). {stored}",
+            style="bold green",
+        ))
+        if tip:
+            out.append(Text(tip, style="dim"))
+        return out
 
     def _cmd_accounts(self, args: list[str]) -> list[Any]:
         if not args:
@@ -296,7 +380,7 @@ class Dispatcher:
             from cli.tui.widgets import AccountsWidget
             accounts = list_accounts(self.state.session)
             if not accounts:
-                return [Text("  No accounts connected. Run: connect <provider> --api-key ...", style="yellow")]
+                return [Text("  No accounts connected. Type `connect` to choose a source.", style="yellow")]
             return [AccountsWidget(accounts, self.state.session)]
 
         elif sub == "sync":

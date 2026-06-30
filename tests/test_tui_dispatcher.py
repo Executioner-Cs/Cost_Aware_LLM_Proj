@@ -288,14 +288,124 @@ def test_connect_openai_compatible_without_base_url_errors(tmp_state):
     assert isinstance(result[0], Text) and "base-url" in result[0].plain.lower()
 
 
-def test_connect_cloud_with_base_url_no_key_still_prompts(tmp_state):
+def _clear_provider_env(monkeypatch):
+    for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_connect_cloud_no_key_shows_secure_guidance_not_inline(tmp_state, monkeypatch):
+    """A cloud provider with no key/env must get secure guidance, never an
+    instruction to paste the key inline."""
+    _clear_provider_env(monkeypatch)
     state, session, home = tmp_state
     d = Dispatcher(state)
+    from rich.panel import Panel
+    # Force the no-key branch deterministically (a stray .env / real env key
+    # must not trigger a live connect during the test).
+    with patch("utils.env.load_dotenv_once"), \
+         patch("utils.env.get_provider_api_key", return_value=None):
+        result = d.dispatch("connect openai --base-url http://x")
+    assert isinstance(result[0], Panel)
+    text = str(result[0].renderable).lower()
+    assert "secure" in text
+    assert "openai_api_key" in text          # points at the env var
+    assert "shell history" in text
+    # The ugly UX and any fake auth claim must be gone.
+    assert "--api-key" not in text
+    assert "paste" not in text
+    assert "oauth" not in text
+    assert "login with" not in text
+    # The TUI does accept --api-key, so the copy must not falsely claim otherwise.
+    assert "will not take it inline" not in text
+
+
+def test_connect_bare_opens_connect_center(tmp_state):
+    state, session, home = tmp_state
+    d = Dispatcher(state)
+    from rich.panel import Panel
+    result = d.dispatch("connect")
+    assert isinstance(result[0], Panel)
+    text = str(result[0].renderable).lower()
+    assert "connect a source" in text
+    assert "no cloud key required" in text   # local Ollama is keyless
+    assert "openai" in text and "ollama" in text
+    # Honest: no inline paste, no fake browser/oauth sign-in.
+    assert "sk-" not in text
+    assert "paste" not in text
+    assert "oauth" not in text
+
+
+def test_connect_env_key_connects_and_reports_source_without_leaking(tmp_state, monkeypatch):
+    """With an env key present, connect happens in-shell, the env var is named
+    (not its value), and the key never appears in the output."""
+    _clear_provider_env(monkeypatch)
+    secret = "sk-test-envkey-9999"
+    monkeypatch.setenv("OPENAI_API_KEY", secret)
+    state, session, home = tmp_state
+
+    fake = MagicMock()
+    fake.id = "acc12345678"
+    fake.base_url = None
+    fake.encrypted_token = "enc"
+
+    with patch("services.connect_service.connect", return_value=fake) as svc:
+        d = Dispatcher(state)
+        result = d.dispatch("connect openai")
+
     from rich.text import Text
-    # A cloud provider without a key must still be told to supply one, even if a
-    # stray --base-url is passed (guard no longer keys off base_url).
-    result = d.dispatch("connect openai --base-url http://x")
-    assert isinstance(result[0], Text) and "supply the key" in result[0].plain.lower()
+    assert svc.call_args[0][2] == secret          # connected with the env key
+    assert isinstance(result[0], Text)
+    assert "from environment" in result[0].plain.lower()
+    blob = " ".join(getattr(r, "plain", str(r)) for r in result)
+    assert secret not in blob                      # key never rendered
+
+
+def test_connect_cloud_inline_key_connects_with_shell_history_tip(tmp_state):
+    """Inline key still works (legacy) but appends the shell-history tip on success."""
+    state, session, home = tmp_state
+    fake = MagicMock()
+    fake.id = "acc1234abcd"
+    fake.base_url = None
+    fake.encrypted_token = "enc"
+    with patch("services.connect_service.connect", return_value=fake) as svc:
+        d = Dispatcher(state)
+        result = d.dispatch("connect openai --api-key sk-inline-12345")
+    assert svc.call_args[0][2] == "sk-inline-12345"
+    blob = " ".join(getattr(r, "plain", str(r)) for r in result)
+    assert "connected openai" in blob.lower()
+    assert "shell history" in blob.lower()         # discouraging tip present
+    assert "sk-inline-12345" not in blob           # key never echoed
+
+
+def test_connect_failure_has_no_misleading_prefix_or_tip(tmp_state):
+    """A failed connect returns only the error: no env note, no shell-history tip."""
+    state, session, home = tmp_state
+    with patch("services.connect_service.connect", side_effect=ValueError("bad key")):
+        d = Dispatcher(state)
+        result = d.dispatch("connect openai --api-key sk-bad-99999")
+    from rich.text import Text
+    assert len(result) == 1
+    assert isinstance(result[0], Text)
+    text = result[0].plain.lower()
+    assert "could not connect openai" in text
+    assert "shell history" not in text
+    assert "from environment" not in text
+
+
+def test_connect_ollama_keyless_reports_local_source(tmp_state):
+    """Local Ollama connects with no key and reports it stores no cloud credential."""
+    state, session, home = tmp_state
+    fake = MagicMock()
+    fake.id = "oll12345678"
+    fake.base_url = "http://localhost:11434"
+    fake.encrypted_token = None
+    with patch("services.connect_service.connect", return_value=fake) as svc:
+        d = Dispatcher(state)
+        result = d.dispatch("connect ollama")
+    assert svc.call_args[0][2] == ""               # keyless
+    blob = " ".join(getattr(r, "plain", str(r)) for r in result)
+    assert "connected ollama" in blob.lower()
+    assert "no cloud key stored" in blob.lower()
 
 
 def test_route_policy_and_task_set_forwarded(tmp_state, monkeypatch):

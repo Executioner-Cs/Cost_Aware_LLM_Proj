@@ -1,6 +1,19 @@
 """Tests for cli/commands/connect.py."""
 
+from typer.testing import CliRunner
+
 from cli.commands.connect import cmd_connect
+from cli.main import app
+
+
+def test_connect_help_discourages_inline_key():
+    """`connect --help` must steer users away from inline keys (shell history)."""
+    result = CliRunner().invoke(app, ["connect", "--help"])
+    assert result.exit_code == 0
+    out = result.output.lower()
+    # Help text wraps at the terminal width, so assert on words, not a phrase.
+    assert "secure" in out
+    assert "history" in out
 
 
 class _DummyStatus:

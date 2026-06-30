@@ -122,6 +122,10 @@ pip install -e ".[all]"              # everything optional
 
 Provider SDKs and the TUI load lazily, so a base install runs the CLI fine and a missing extra produces a clear message naming the one to install. groq routing reuses the openai SDK, so it needs the `openai` extra (there is no separate groq extra).
 
+### Upgrading
+
+There is no database migration system. New tables added in a release are created automatically by `create_all` without altering existing ones, so fresh installs just work and existing local data is preserved. Before upgrading an existing setup, back up `~/.orchestrator/orchestrator.db` (or `$ORCHESTRATOR_HOME`). If your local state is disposable, point `ORCHESTRATOR_HOME` at a clean directory and run `orchestrator init` fresh.
+
 ## First-time setup
 
 ```bash

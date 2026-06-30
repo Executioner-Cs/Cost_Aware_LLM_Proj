@@ -82,7 +82,7 @@ def _launch_tui() -> None:
 
 @app.command("init")
 def cmd_init():
-    """Initialise orchestrator home directory, database, and vector store."""
+    """Initialise orchestrator home directory and database."""
     from services.init_service import run_init
     run_init()
     if _is_interactive_tty():

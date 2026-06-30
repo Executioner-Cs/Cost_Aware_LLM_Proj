@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "orchestrator-cli"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local-first CLI to benchmark and route prompts across local and cloud LLMs by cost and capability, with an exact-match cache and experimental sandboxed agent tools"
 readme = "README.md"
 requires-python = ">=3.11"

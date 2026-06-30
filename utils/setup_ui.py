@@ -94,12 +94,14 @@ def render_init_banner() -> None:
 
 def render_init_success_panel(home: Path) -> None:
     """Render success summary + clear next steps."""
-    ok = "✓" if _supports_unicode_art() else "+"
+    unicode_ok = _supports_unicode_art()
+    ok = "✓" if unicode_ok else "+"
+    ellipsis_char = "…" if unicode_ok else "..."
     lines = Text()
     lines.append(f"{ok} Setup complete.\n", style="bold green")
     lines.append(f"Config   : {home / 'config.toml'}\n", style="bright_white")
     lines.append(f"Database : {home / 'orchestrator.db'}\n", style="bright_white")
-    lines.append("\nLaunching orchestrator shell…\n", style="bold bright_cyan")
+    lines.append(f"\nLaunching orchestrator shell{ellipsis_char}\n", style="bold bright_cyan")
 
     panel = Panel(
         Align.left(lines),

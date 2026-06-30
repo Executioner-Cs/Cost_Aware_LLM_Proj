@@ -79,6 +79,7 @@ def cmd_edit(
     instruction: Annotated[str, typer.Argument(help="What to change")],
     quality: Annotated[str, typer.Option("--quality", "-q")] = "balanced",
 ):
+    """Ask the agent to edit a file under the sandbox for a scoped task."""
     goal = f"Edit file {path!r}: {instruction}. Use read_file before write_file; keep changes minimal."
     _run_goal(goal, quality, None, plan=True, plan_llm=False)
 
@@ -88,6 +89,7 @@ def cmd_explain(
     path: Annotated[str, typer.Argument(help="File path under sandbox")],
     quality: Annotated[str, typer.Option("--quality", "-q")] = "balanced",
 ):
+    """Explain a file's purpose and structure without modifying it."""
     goal = f"Read {path!r} and explain its purpose and structure clearly."
     _run_goal(goal, quality, None, plan=False, plan_llm=False)
 
@@ -96,6 +98,7 @@ def cmd_explain(
 def cmd_fix_tests(
     quality: Annotated[str, typer.Option("--quality", "-q")] = "balanced",
 ):
+    """Run the sandboxed test suite and fix failures until it passes."""
     goal = (
         "Run run_tests. If failures occur, read relevant files, fix the code, "
         "and re-run run_tests until passing or you cannot proceed."
@@ -109,5 +112,6 @@ def cmd_refactor(
     instruction: Annotated[str, typer.Argument(help="Refactoring goal")],
     quality: Annotated[str, typer.Option("--quality", "-q")] = "balanced",
 ):
+    """Refactor a file or module under a scoped instruction, preserving behaviour."""
     goal = f"Refactor {target!r}: {instruction}. Preserve behaviour; run_tests when done."
     _run_goal(goal, quality, 12, plan=True, plan_llm=False)

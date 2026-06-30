@@ -52,6 +52,9 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-mock>=3.14",
+    # Test-only: the CLI sim tests reference click APIs (e.g. click.Abort).
+    # Modern typer no longer pulls click transitively, so declare it here.
+    "click>=8.0",
 ]
 # Everything optional at runtime (tui + providers). The legacy heavy semantic
 # cache (sentence-transformers + qdrant-client) was removed; a lighter semantic

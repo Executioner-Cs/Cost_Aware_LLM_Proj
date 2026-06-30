@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from core import classifier, reasons
 from core.cache import get_cache
 from core.cost_estimator import estimate_tokens, estimate_cost
-from core.policy import decide as decide_route, get_policy, POLICIES
+from core.policy import decide as decide_route, get_policy, POLICIES, PRESET_NOTES
 from core.validator import validate, ValidationError
 from db.models import Trace
 from db.repositories.models import list_enabled
@@ -53,6 +53,8 @@ def route(request: RouteRequest, session: Session) -> RouteResult:
     policy = get_policy(request.policy)
     if request.policy and request.policy not in POLICIES:
         print_warning(f"Unknown policy '{request.policy}'; using the default cheapest-capable policy.")
+    elif request.policy in PRESET_NOTES:
+        print_warning(PRESET_NOTES[request.policy])
     if request.task_set and not policy.prefer_scorecards:
         print_warning(
             f"--task-set is only used by scorecard-aware policies; ignoring it for policy '{policy.name}'."

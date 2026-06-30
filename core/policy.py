@@ -45,6 +45,9 @@ class RoutingPolicy:
     # Declared but not yet scored (no data until benchmark scorecards exist).
     weight_latency: float = 0.0
     weight_reliability: float = 0.0
+    # Auto preset: derive a per-task minimum tier (quality floor) and rank the
+    # models that clear it, instead of using the quality min/max tier range.
+    task_aware_floor: bool = False
 
     @property
     def is_default(self) -> bool:
@@ -53,22 +56,60 @@ class RoutingPolicy:
             and self.weight_quality == 0.0 and self.weight_context == 0.0
             and not self.prefer_scorecards and self.weight_scorecard == 0.0
             and self.weight_latency == 0.0 and self.weight_reliability == 0.0
+            and not self.task_aware_floor
         )
 
 
 DEFAULT_POLICY = RoutingPolicy()
 
-# Named policies the engine can resolve. Kept small and explicit.
+# The Auto preset: constraint-aware everyday routing. It sets a per-task quality
+# floor (so it does not pick the cheapest weak model), then ranks the models that
+# clear the floor by benchmark evidence with cost as the tie-breaker (so it does
+# not always pick the biggest or the priciest model either). weight_quality stays
+# 0: Auto prefers the cheapest model above the floor, not the highest tier.
+AUTO_POLICY = RoutingPolicy(
+    name="auto", task_aware_floor=True, prefer_scorecards=True,
+    weight_scorecard=2.0, weight_cost=1.0,
+)
+_PRIVACY_POLICY = RoutingPolicy(name="privacy-first", require_local=True)
+_QUALITY_POLICY = RoutingPolicy(name="quality-first", weight_quality=2.0, weight_cost=0.5)
+# Benchmark-driven routing: a high score on the user's own task sets dominates,
+# with cost as the tie-breaker so unscored models fall back to cheapest-capable.
+_BENCHMARKED_POLICY = RoutingPolicy(
+    name="benchmarked", prefer_scorecards=True, weight_scorecard=3.0, weight_cost=0.5,
+)
+
+# Named policies the engine can resolve: one object per distinct behavior, with the
+# user-facing preset vocabulary aliased onto them (the same pattern the existing
+# 'default'/'cheapest' synonyms already use). Aliasing rather than cloning means
+# there are no duplicate policy objects to drift apart.
 POLICIES: dict[str, RoutingPolicy] = {
+    # cheapest-capable (the default route)
     "default": DEFAULT_POLICY,
     "cheapest": DEFAULT_POLICY,
-    "privacy-first": RoutingPolicy(name="privacy-first", require_local=True),
-    "quality-first": RoutingPolicy(name="quality-first", weight_quality=2.0, weight_cost=0.5),
-    # Benchmark-driven routing: a high score on the user's own task sets dominates,
-    # with cost as the tie-breaker so unscored models fall back to cheapest-capable.
-    "benchmarked": RoutingPolicy(
-        name="benchmarked", prefer_scorecards=True, weight_scorecard=3.0, weight_cost=0.5,
-    ),
+    "cheap": DEFAULT_POLICY,
+    # constraint-aware Auto (per-task quality floor)
+    "auto": AUTO_POLICY,
+    # 'fast' is recognized but its latency-aware ranking is not built yet (no
+    # reliable per-model latency feeds scoring). It routes via Auto and the router
+    # says so (PRESET_NOTES), instead of giving a misleading "unknown policy".
+    "fast": AUTO_POLICY,
+    # hard local-only (privacy)
+    "privacy-first": _PRIVACY_POLICY,
+    "private": _PRIVACY_POLICY,
+    "local": _PRIVACY_POLICY,
+    # quality-weighted (prefer higher tier)
+    "quality-first": _QUALITY_POLICY,
+    "best": _QUALITY_POLICY,
+    "deep": _QUALITY_POLICY,
+    # scorecard-driven
+    "benchmarked": _BENCHMARKED_POLICY,
+}
+
+# Presets that are intentionally routed via another policy until their own
+# behavior lands. The note is surfaced to the user so the mapping stays honest.
+PRESET_NOTES: dict[str, str] = {
+    "fast": "'fast' routes via Auto for now; latency-aware ranking is planned, not yet built.",
 }
 
 
@@ -155,6 +196,65 @@ def _explain(
     )
 
 
+def _auto_pool(
+    models: list[ModelRegistry],
+    task_type: str,
+    quality: str,
+    input_tokens: int,
+    policy: RoutingPolicy,
+) -> tuple[list[ModelRegistry], str, bool]:
+    """Auto's candidate pool: capable models that clear the task's quality floor,
+    cheapest-first, after the policy's hard filters.
+
+    Returns ``(pool, floor_name, floor_met)``. When no capable model reaches the
+    floor, the pool falls back to the best-effort capable models (still after hard
+    filters, so a local-only policy never falls back to cloud) and ``floor_met`` is
+    False so the explanation can say so honestly.
+    """
+    floor_name = model_selector.auto_floor_tier(task_type, quality)
+    floor = TIER_ORDER.get(floor_name, 0)
+    capable = [
+        m for m in model_selector.capable_models(models, task_type, input_tokens)
+        if _passes_hard_filters(m, policy)
+    ]
+    clearing = [m for m in capable if TIER_ORDER.get(m.tier, 0) >= floor]
+    if clearing:
+        return clearing, floor_name, True
+    return capable, floor_name, False
+
+
+def _explain_auto(
+    winner: ModelRegistry,
+    policy: RoutingPolicy,
+    scores: Optional[dict[str, float]],
+    task_type: str,
+    floor_name: str,
+    floor_met: bool,
+) -> str:
+    local = " local-only" if policy.require_local else ""
+    if floor_met:
+        head = (
+            f"Auto inferred a '{task_type}' task and set a '{floor_name}' quality floor, "
+            f"then chose the cheapest{local} model that clears it"
+        )
+    else:
+        head = (
+            f"Auto inferred a '{task_type}' task wanting a '{floor_name}' floor, but no "
+            f"available{local} model reaches it, so it used the best available"
+        )
+    winner_score = (scores or {}).get(winner.external_model_id)
+    if winner_score is not None:
+        evidence = f" It scored {winner_score:.0%} on your benchmarks."
+    elif scores:
+        evidence = " No benchmark score for it; ranked by cost above the floor."
+    else:
+        evidence = " No benchmark evidence yet; ranked by cost above the floor."
+    return (
+        f"{head}: {winner.external_model_id} "
+        f"({winner.provider}, tier {winner.tier}).{evidence}"
+    )
+
+
 def decide(
     models: list[ModelRegistry],
     task_type: str,
@@ -166,26 +266,36 @@ def decide(
     """Choose a model under *policy* and explain the choice.
 
     For the default policy the winner is the cheapest capable model, identical to
-    ``model_selector.select``. Explicit policies score the candidate pool.
-    ``scores`` maps ``external_model_id`` to a benchmark score in [0, 1]; it is
-    consulted only by scorecard-aware policies and supplied by the caller so this
-    module performs no I/O.
+    ``model_selector.select``. Explicit policies score the candidate pool. The Auto
+    preset (``task_aware_floor``) builds its pool from a per-task quality floor
+    instead of the quality min/max tier range. ``scores`` maps ``external_model_id``
+    to a benchmark score in [0, 1]; it is consulted only by scorecard-aware policies
+    and supplied by the caller so this module performs no I/O.
     """
-    pool = [
-        m for m in model_selector.candidates(models, task_type, quality, input_tokens)
-        if _passes_hard_filters(m, policy)
-    ]
+    floor_name = ""
+    floor_met = True
+    if policy.task_aware_floor:
+        pool, floor_name, floor_met = _auto_pool(models, task_type, quality, input_tokens, policy)
+    else:
+        pool = [
+            m for m in model_selector.candidates(models, task_type, quality, input_tokens)
+            if _passes_hard_filters(m, policy)
+        ]
 
     if not pool:
+        # Auto builds its pool from the task floor and capabilities, not the quality
+        # tier range, so naming 'quality' here would misdescribe why nothing matched.
+        constraint = (
+            f"task '{task_type}' under the '{floor_name}' quality floor"
+            if policy.task_aware_floor
+            else f"task '{task_type}', quality '{quality}'"
+        )
         return RouteDecision(
             selected=None,
             reason="no_suitable_model",
             ranked=[],
             fallback=[],
-            explanation=(
-                f"No model satisfies task '{task_type}', quality '{quality}', "
-                f"and policy '{policy.name}'."
-            ),
+            explanation=f"No model satisfies {constraint}, and policy '{policy.name}'.",
         )
 
     if policy.is_default:
@@ -199,7 +309,10 @@ def decide(
         ordered = sorted(pool, key=lambda m: _score(m, policy, pool, scores), reverse=True)
         winner = ordered[0]
         ranked = [(m.external_model_id, round(_score(m, policy, pool, scores), 4)) for m in ordered]
-        explanation = _explain(winner, policy, scores)
+        if policy.task_aware_floor:
+            explanation = _explain_auto(winner, policy, scores, task_type, floor_name, floor_met)
+        else:
+            explanation = _explain(winner, policy, scores)
 
     fallback = [mid for mid, _ in ranked if mid != winner.external_model_id]
     return RouteDecision(
